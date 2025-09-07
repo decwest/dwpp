@@ -1,5 +1,9 @@
 # DWPP: Dynamic Window Pure Pursuit for Robot Path Tracking Considering Velocity and Acceleration Constraints
 
+# 🟢 **Nav2 plugin implementation is now available!**  
+
+👉 https://github.com/Decwest/nav2_dynamic_window_pure_pursuit_controller
+
 ## Folder Structure
 
 - `scripts/`  
@@ -8,10 +12,6 @@
 - `ros1_node_example/`  
   Includes example ROS 1 implementations of DWPP and conventional pure pursuit methods.  
   The file `dwpp_ros_node.py` was used in real-world robot experiments, but it depends on our private configurations and cannot be used directly. Please use it as a reference only.
-
-- `nav2_dwpp_controller/`  
-  A work-in-progress (WIP) implementation of the DWPP controller as a Nav2 plugin.  
-  The final version will be released in a separate GitHub repository.
 
 - `results/`  
   Contains result figures used in the paper.
