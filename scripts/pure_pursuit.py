@@ -4,6 +4,8 @@ from config import MIN_LOOK_AHEAD_DISTANCE, MAX_LOOK_AHEAD_DISTANCE, LOOK_AHEAD_
     A_MAX, AW_MAX, DT, APPROACH_VELOCITY_SCALING_DIST, MIN_APPROACH_LINEAR_VELOCITY, GOAL_TORELANCE_DIST, \
     REGULATED_LINEAR_SCALING_MIN_RADIUS, REGULATED_LINEAR_SCALING_MIN_SPEED
 
+ACCEL_CONSTRAINT_EPS = 1e-10
+
 def pure_pursuit(current_pose: np.ndarray, current_velocity: np.ndarray, path: np.ndarray, method_name: str)\
     -> tuple[np.ndarray, np.ndarray, list[bool], float, float]:
     # calc index of current position
@@ -14,28 +16,45 @@ def pure_pursuit(current_pose: np.ndarray, current_velocity: np.ndarray, path: n
     
     # calc look ahead distance (Adaptive Pure Pursuit)
     look_ahead_distance = calc_look_ahead_distance(current_velocity, method_name)
-    
-    # calc curvature to the look ahead position
+
+    if method_name in ["dwpp_omni", "dwpp_omni_clip"]:
+        # 全方位版: path は N x 3 ([x, y, theta]) を前提
+        look_ahead_pose = calc_look_ahead_pose(current_idx, path, path_distances, look_ahead_distance)
+        ideal_velocity = calc_ideal_velocity_vector_omnidirectional(current_pose, look_ahead_pose)
+        is_accel = decide_accel_or_decel_omnidirectional(current_idx, path_distances, current_velocity)
+        if method_name == "dwpp_omni":
+            next_velocity_ref = calc_optimal_velocity_considering_dynamic_window_omnidirectional(
+                current_velocity=current_velocity,
+                ideal_velocity=ideal_velocity,
+                is_accel=is_accel
+            )
+        else:
+            # 比較手法: 理想ベクトルをそのまま速度指令値にする
+            next_velocity_ref = ideal_velocity.copy()
+        break_constraints_flag = evaluate_accelaration_constraints_omnidirectional(current_velocity, next_velocity_ref)
+        return next_velocity_ref, look_ahead_pose, break_constraints_flag, float("nan"), float("nan")
+
+    # 差動二輪版 (既存実装)
     curvature, look_ahead_pos = calc_curvature_to_look_ahead_position(current_pose, current_idx, path, path_distances, look_ahead_distance)
-    
+
     if method_name in ["rpp", "dwpp"]:
         # calc regulated translational velocity (Regulated Pure Pursuit)
         regulated_v = calc_regulated_translational_velocity(curvature)
     else:
         regulated_v = V_MAX
-    
+
     if method_name in ["pp", "app", "rpp"]:
         # calc translational velocity
         v_ref = calc_reference_translational_velocity(current_pose, path[-1])
-        
+
         # regulate translational velocity
         if method_name == "rpp":
             v_ref = min(v_ref, regulated_v)
-        
+
         # calc angular velocity
         w_ref = curvature * v_ref
         next_velocity_ref = np.array([v_ref, w_ref])
-        
+
     else:
         # decide accel or decel
         is_accel = decide_accel_or_decel(current_idx, path_distances)
@@ -43,15 +62,17 @@ def pure_pursuit(current_pose: np.ndarray, current_velocity: np.ndarray, path: n
         next_velocity_ref = calc_optimal_velocity_considering_dynamic_window(current_velocity, regulated_v, curvature, is_accel)
 
     break_constraints_flag = evaluate_accelaration_constraints(current_velocity, next_velocity_ref)
-    
+
     # debug用に、next_velocity_refと前方注視点の位置も返す
     return next_velocity_ref, look_ahead_pos, break_constraints_flag, curvature, regulated_v
 
 def evaluate_accelaration_constraints(current_velocity: np.ndarray, next_velocity_ref: np.ndarray) -> list[bool]:
     break_constraints_flag = [False, False]
-    if current_velocity[0] - A_MAX * DT > next_velocity_ref[0] or current_velocity[0] + A_MAX * DT < next_velocity_ref[0]:
+    if current_velocity[0] - A_MAX * DT > next_velocity_ref[0] + ACCEL_CONSTRAINT_EPS or \
+        current_velocity[0] + A_MAX * DT < next_velocity_ref[0] - ACCEL_CONSTRAINT_EPS:
         break_constraints_flag[0] = True
-    if current_velocity[1] - AW_MAX * DT > next_velocity_ref[1] or current_velocity[1] + AW_MAX * DT < next_velocity_ref[1]:
+    if current_velocity[1] - AW_MAX * DT > next_velocity_ref[1] + ACCEL_CONSTRAINT_EPS or \
+        current_velocity[1] + AW_MAX * DT < next_velocity_ref[1] - ACCEL_CONSTRAINT_EPS:
         break_constraints_flag[1] = True
     
     return break_constraints_flag
@@ -79,7 +100,7 @@ def calc_index(current_pose: np.ndarray, path: np.ndarray) -> np.intp:
 def calc_path_distances(path: np.ndarray) -> np.ndarray:
     # 経路の距離の累積和を計算
     ## 点間の差を計算
-    differences = np.diff(path, axis=0)
+    differences = np.diff(path[:, :2], axis=0)
     ## 各差のノルム（距離）を計算
     distances = np.linalg.norm(differences, axis=1)
     ## 累積距離を計算
@@ -89,8 +110,12 @@ def calc_path_distances(path: np.ndarray) -> np.ndarray:
 
 def calc_look_ahead_distance(current_velocity: np.ndarray, method_name: str) -> float:
     # calc look ahead distance
-    if method_name in ["app", "rpp", "dwpp", "dwpp_wo_rpp"]:
-        look_ahead_distance = LOOK_AHEAD_TIME * current_velocity[0]
+    if method_name in ["app", "rpp", "dwpp", "dwpp_wo_rpp", "dwpp_omni", "dwpp_omni_clip"]:
+        if method_name in ["dwpp_omni", "dwpp_omni_clip"]:
+            current_speed = float(np.linalg.norm(current_velocity[:2]))
+        else:
+            current_speed = current_velocity[0]
+        look_ahead_distance = LOOK_AHEAD_TIME * current_speed
         look_ahead_distance = min(max(look_ahead_distance, MIN_LOOK_AHEAD_DISTANCE), MAX_LOOK_AHEAD_DISTANCE)
         # look_ahead_distance = MIN_LOOK_AHEAD_DISTANCE + (STATIC_LOOK_AHEAD_DISTANCE - MIN_LOOK_AHEAD_DISTANCE) / V_MAX * current_velocity[0]
     else:
@@ -107,13 +132,15 @@ def calc_curvature_to_look_ahead_position(current_pose: np.ndarray, current_idx:
     ## 前方注視点のインデックスを取得
     look_ahead_idx = min(np.searchsorted(path_distances, look_ahead_pos_distance), len(path) - 1)
     ## 前方注視点の位置を取得
-    look_ahead_pos = path[look_ahead_idx]
+    look_ahead_pos = path[look_ahead_idx, :2]
     
     # 曲率を計算
     ## 前方注視点に向けた角度を計算
     look_ahead_angle = (math.atan2(look_ahead_pos[1] - current_pose[1], look_ahead_pos[0] - current_pose[0]) - current_pose[2])
     ## 前方注視点までの距離を計算
     L = float(np.linalg.norm(look_ahead_pos - current_pose[:2]))
+    if L == 0.0:
+        return 0.0, look_ahead_pos
     ## 曲率を計算
     curvature = 2.0 * math.sin(look_ahead_angle) / L
     
@@ -226,3 +253,219 @@ def calc_optimal_velocity_considering_dynamic_window(current_velocity: np.ndarra
     
     return np.array(next_velocity)
 
+
+def normalize_angle(angle: float) -> float:
+    return (angle + np.pi) % (2.0 * np.pi) - np.pi
+
+
+def calc_path_theta(path: np.ndarray, idx: np.intp) -> float:
+    if path.shape[1] >= 3:
+        return float(path[idx, 2])
+
+    # path が N x 2 の場合のフォールバック（接線角）
+    if len(path) == 1:
+        return 0.0
+    prev_idx = max(idx - 1, 0)
+    next_idx = min(idx + 1, len(path) - 1)
+    delta = path[next_idx, :2] - path[prev_idx, :2]
+    if float(np.linalg.norm(delta)) == 0.0:
+        return 0.0
+    return float(math.atan2(delta[1], delta[0]))
+
+
+def calc_look_ahead_pose(current_idx: np.intp, path: np.ndarray, path_distances: np.ndarray, look_ahead_distance: float) -> np.ndarray:
+    current_distance = path_distances[current_idx]
+    look_ahead_pose_distance = current_distance + look_ahead_distance
+    look_ahead_idx = min(np.searchsorted(path_distances, look_ahead_pose_distance), len(path) - 1)
+    look_ahead_x = float(path[look_ahead_idx, 0])
+    look_ahead_y = float(path[look_ahead_idx, 1])
+    look_ahead_theta = calc_path_theta(path, look_ahead_idx)
+    return np.array([look_ahead_x, look_ahead_y, look_ahead_theta])
+
+
+def calc_ideal_velocity_vector_omnidirectional(current_pose: np.ndarray, look_ahead_pose: np.ndarray) -> np.ndarray:
+    # 位置誤差（world）
+    dx = look_ahead_pose[0] - current_pose[0]
+    dy = look_ahead_pose[1] - current_pose[1]
+
+    # 位置誤差をロボット座標へ変換
+    c = math.cos(current_pose[2])
+    s = math.sin(current_pose[2])
+    ex_body = c * dx + s * dy
+    ey_body = -s * dx + c * dy
+
+    # 姿勢誤差
+    e_theta = normalize_angle(look_ahead_pose[2] - current_pose[2])
+
+    return np.array([ex_body, ey_body, e_theta])
+
+
+def decide_accel_or_decel_omnidirectional(current_idx: np.intp, path_distances: np.ndarray, current_velocity: np.ndarray) -> bool:
+    goal_distance = path_distances[-1] - path_distances[current_idx]
+    speed = float(np.linalg.norm(current_velocity[:2]))
+    if A_MAX == 0.0:
+        return False
+    decel_distance = (speed ** 2) / (2.0 * A_MAX)
+    return goal_distance > decel_distance
+
+
+def evaluate_accelaration_constraints_omnidirectional(current_velocity: np.ndarray, next_velocity_ref: np.ndarray) -> list[bool]:
+    limits = np.array([A_MAX, A_MAX, AW_MAX]) * DT
+    break_constraints = np.abs(next_velocity_ref - current_velocity) > (limits + ACCEL_CONSTRAINT_EPS)
+    return [bool(break_constraints[0]), bool(break_constraints[1]), bool(break_constraints[2])]
+
+
+def calc_dynamic_window_bounds_omnidirectional(current_velocity: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    dw_min = np.array([
+        max(current_velocity[0] - A_MAX * DT, -V_MAX),
+        max(current_velocity[1] - A_MAX * DT, -V_MAX),
+        max(current_velocity[2] - AW_MAX * DT, W_MIN),
+    ])
+    dw_max = np.array([
+        min(current_velocity[0] + A_MAX * DT, V_MAX),
+        min(current_velocity[1] + A_MAX * DT, V_MAX),
+        min(current_velocity[2] + AW_MAX * DT, W_MAX),
+    ])
+    return dw_min, dw_max
+
+
+def calc_clipped_velocity_omnidirectional_without_dynamic_window(
+    current_velocity: np.ndarray,
+    ideal_velocity: np.ndarray
+) -> np.ndarray:
+    # 比較手法: 理想ベクトルをDW境界で成分ごとにクリッピング
+    dw_min, dw_max = calc_dynamic_window_bounds_omnidirectional(current_velocity)
+    return np.clip(ideal_velocity, dw_min, dw_max)
+
+
+def calc_optimal_velocity_considering_dynamic_window_omnidirectional(
+    current_velocity: np.ndarray,
+    ideal_velocity: np.ndarray,
+    is_accel: bool
+) -> np.ndarray:
+    # dynamic window を直方体として構築
+    dw_min, dw_max = calc_dynamic_window_bounds_omnidirectional(current_velocity)
+
+    if float(np.linalg.norm(ideal_velocity)) == 0.0:
+        return np.clip(np.zeros(3), dw_min, dw_max)
+
+    intersects, alpha_min, alpha_max = calc_ray_box_intersection_alpha_range(ideal_velocity, dw_min, dw_max)
+    if intersects:
+        alpha = alpha_max if is_accel else alpha_min
+    else:
+        alpha = calc_closest_alpha_to_box_from_ray(ideal_velocity, dw_min, dw_max, prefer_large_alpha=is_accel)
+
+    return np.clip(alpha * ideal_velocity, dw_min, dw_max)
+
+
+def calc_ray_box_intersection_alpha_range(ray_direction: np.ndarray, box_min: np.ndarray, box_max: np.ndarray) -> tuple[bool, float, float]:
+    alpha_low = 0.0
+    alpha_high = float("inf")
+    eps = 1e-12
+
+    for d, lower, upper in zip(ray_direction, box_min, box_max):
+        if abs(d) < eps:
+            # この軸は alpha に依存しない。0 が範囲外なら交差不可。
+            if lower <= 0.0 <= upper:
+                continue
+            return False, 0.0, 0.0
+
+        a1 = lower / d
+        a2 = upper / d
+        axis_low = min(a1, a2)
+        axis_high = max(a1, a2)
+
+        alpha_low = max(alpha_low, axis_low)
+        alpha_high = min(alpha_high, axis_high)
+
+        if alpha_low > alpha_high:
+            return False, 0.0, 0.0
+
+    if alpha_high < 0.0:
+        return False, 0.0, 0.0
+
+    alpha_low = max(alpha_low, 0.0)
+    if alpha_low <= alpha_high:
+        return True, alpha_low, alpha_high
+    return False, 0.0, 0.0
+
+
+def calc_closest_alpha_to_box_from_ray(
+    ray_direction: np.ndarray,
+    box_min: np.ndarray,
+    box_max: np.ndarray,
+    prefer_large_alpha: bool
+) -> float:
+    eps = 1e-12
+    tol = 1e-10
+    best_alpha = 0.0
+    best_dist = float("inf")
+
+    def eval_alpha(alpha: float):
+        nonlocal best_alpha, best_dist
+        point = alpha * ray_direction
+        nearest = np.clip(point, box_min, box_max)
+        dist = float(np.sum((point - nearest) ** 2))
+        if dist + tol < best_dist:
+            best_dist = dist
+            best_alpha = alpha
+            return
+        if abs(dist - best_dist) <= tol:
+            if prefer_large_alpha and alpha > best_alpha:
+                best_alpha = alpha
+            if (not prefer_large_alpha) and alpha < best_alpha:
+                best_alpha = alpha
+
+    # 区分点（各軸の範囲境界を ray が横切る alpha）
+    breakpoints = [0.0]
+    for d, lower, upper in zip(ray_direction, box_min, box_max):
+        if abs(d) < eps:
+            continue
+        breakpoints.append(lower / d)
+        breakpoints.append(upper / d)
+
+    breakpoints = sorted(set(float(b) for b in breakpoints if np.isfinite(b) and b >= 0.0))
+    if len(breakpoints) == 0:
+        return 0.0
+
+    for alpha in breakpoints:
+        eval_alpha(alpha)
+
+    def calc_interval_quadratic_coeff(a: float, b: float | None) -> tuple[float, float]:
+        if b is None:
+            probe = a + 1.0
+        else:
+            probe = 0.5 * (a + b)
+
+        qa = 0.0
+        qb = 0.0
+        for d, lower, upper in zip(ray_direction, box_min, box_max):
+            p = probe * d
+            if p < lower - eps:
+                qa += d ** 2
+                qb += -2.0 * lower * d
+            elif p > upper + eps:
+                qa += d ** 2
+                qb += -2.0 * upper * d
+            # inside の場合は寄与ゼロ
+        return qa, qb
+
+    for i in range(len(breakpoints) - 1):
+        left = breakpoints[i]
+        right = breakpoints[i + 1]
+        qa, qb = calc_interval_quadratic_coeff(left, right)
+        if qa <= eps:
+            continue
+        alpha_star = -qb / (2.0 * qa)
+        if left <= alpha_star <= right:
+            eval_alpha(alpha_star)
+
+    # 最終区間 [last, +inf)
+    last = breakpoints[-1]
+    qa, qb = calc_interval_quadratic_coeff(last, None)
+    if qa > eps:
+        alpha_star = -qb / (2.0 * qa)
+        if alpha_star >= last:
+            eval_alpha(alpha_star)
+
+    return best_alpha

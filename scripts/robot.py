@@ -40,3 +40,63 @@ def calc_accel_constrained_velocity(current_velocity: np.ndarray, next_velocity_
     
     return next_velocity
 
+
+def forward_simulation_omnidirectional(
+    current_pose: np.ndarray,
+    current_velocity: np.ndarray,
+    next_velocity_ref: np.ndarray,
+    vx_min: float = -V_MAX,
+    vx_max: float = V_MAX,
+    vy_min: float = -V_MAX,
+    vy_max: float = V_MAX,
+    w_min: float = W_MIN,
+    w_max: float = W_MAX,
+    a_xy_max: float = A_MAX,
+    aw_max: float = AW_MAX
+) -> tuple[np.ndarray, np.ndarray]:
+    # next_velocity_ref はロボット座標系 [vx, vy, w] を想定
+    next_velocity = calc_accel_constrained_velocity_omnidirectional(
+        current_velocity=current_velocity,
+        next_velocity_ref=next_velocity_ref,
+        vx_min=vx_min,
+        vx_max=vx_max,
+        vy_min=vy_min,
+        vy_max=vy_max,
+        w_min=w_min,
+        w_max=w_max,
+        a_xy_max=a_xy_max,
+        aw_max=aw_max
+    )
+
+    theta = current_pose[2]
+    vx_body, vy_body, w = next_velocity
+
+    # ロボット座標系の並進速度をワールド座標系へ変換
+    vx_world = vx_body * np.cos(theta) - vy_body * np.sin(theta)
+    vy_world = vx_body * np.sin(theta) + vy_body * np.cos(theta)
+
+    next_pose = current_pose + np.array([vx_world, vy_world, w]) * DT
+    return next_pose, next_velocity
+
+
+def calc_accel_constrained_velocity_omnidirectional(
+    current_velocity: np.ndarray,
+    next_velocity_ref: np.ndarray,
+    vx_min: float = -V_MAX,
+    vx_max: float = V_MAX,
+    vy_min: float = -V_MAX,
+    vy_max: float = V_MAX,
+    w_min: float = W_MIN,
+    w_max: float = W_MAX,
+    a_xy_max: float = A_MAX,
+    aw_max: float = AW_MAX
+) -> np.ndarray:
+    # [vx, vy, w] それぞれに速度制約と加速度制約を適用
+    velocity_min = np.array([vx_min, vy_min, w_min], dtype=float)
+    velocity_max = np.array([vx_max, vy_max, w_max], dtype=float)
+    accel_max = np.array([a_xy_max, a_xy_max, aw_max], dtype=float)
+
+    upper = np.minimum(current_velocity + accel_max * DT, velocity_max)
+    lower = np.maximum(current_velocity - accel_max * DT, velocity_min)
+    next_velocity = np.clip(next_velocity_ref, lower, upper)
+    return next_velocity

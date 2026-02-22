@@ -2,6 +2,25 @@ from collections import defaultdict
 import numpy as np
 from scipy.spatial.distance import cdist
 
+
+def normalize_angle(angle: np.ndarray) -> np.ndarray:
+    return (angle + np.pi) % (2.0 * np.pi) - np.pi
+
+
+def calc_path_headings(path: np.ndarray) -> np.ndarray:
+    # path が N x 3 の場合はそのまま姿勢を使用
+    if path.shape[1] >= 3:
+        return path[:, 2]
+
+    # path が N x 2 の場合は接線方向を姿勢として近似
+    if len(path) == 1:
+        return np.array([0.0])
+
+    diffs = np.diff(path[:, :2], axis=0)
+    headings = np.arctan2(diffs[:, 1], diffs[:, 0])
+    headings = np.concatenate([headings, [headings[-1]]])
+    return headings
+
 def calc_rmse(robot_poses_dict: defaultdict, path: np.ndarray) -> dict:
     """
     各手法で得られたロボット軌跡 (robot_poses) に対し、
@@ -41,6 +60,42 @@ def calc_rmse(robot_poses_dict: defaultdict, path: np.ndarray) -> dict:
         # print(f"Method: {method_name_dict[method_name]}, RMSE: {rmse:.6f}")
 
     return rmse_dict
+
+
+def calc_heading_rmse(robot_poses_dict: defaultdict, path: np.ndarray) -> dict:
+    """
+    姿勢誤差(heading error)のみのRMSEを算出する。
+    RMSE = sqrt(mean(e_theta^2))
+    """
+    heading_rmse_dict = {}
+
+    path_xy = path[:, :2]
+    path_headings = calc_path_headings(path)
+
+    for method_name in robot_poses_dict:
+        robot_poses = np.array(robot_poses_dict[method_name])
+        robot_xy = robot_poses[:, :2]
+
+        distance_matrix = cdist(robot_xy, path_xy, metric='euclidean')
+        nearest_indices = np.argmin(distance_matrix, axis=1)
+
+        # 姿勢誤差（最近傍パス点の姿勢との差）
+        if robot_poses.shape[1] >= 3:
+            robot_headings = robot_poses[:, 2]
+        else:
+            robot_headings = np.zeros(len(robot_poses))
+        ref_headings = path_headings[nearest_indices]
+        heading_errors = normalize_angle(robot_headings - ref_headings)
+
+        heading_rmse = np.sqrt(np.mean(heading_errors**2))
+        heading_rmse_dict[method_name] = float(heading_rmse)
+
+    return heading_rmse_dict
+
+
+def calc_rmse_with_heading(robot_poses_dict: defaultdict, path: np.ndarray) -> dict:
+    # 後方互換のため残す（中身は角度誤差のみRMSE）
+    return calc_heading_rmse(robot_poses_dict, path)
 
 def calc_break_constraints_rate(break_constraints_flags_dict: dict) -> dict:
     

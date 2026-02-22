@@ -6,10 +6,15 @@ from matplotlib.animation import FuncAnimation
 from matplotlib.patches import FancyArrowPatch
 from config import method_name_dict, DT, V_MIN, V_MAX, W_MIN, W_MAX, A_MAX, AW_MAX
 from collections import defaultdict
-import os
 import concurrent.futures
-import cv2
 from pathlib import Path
+
+try:
+    import cv2
+except ImportError:
+    cv2 = None
+
+RESULTS_DIR = Path(__file__).resolve().parent.parent / "results"
 
 plt.rcParams["font.size"] = 9  # 全体のフォントサイズが変更されます。
 plt.rcParams["font.family"] = "Times New Roman"  # 全体のフォントを設定
@@ -20,9 +25,71 @@ plt.rcParams["axes.grid"] = True  # make grid
 plt.rcParams["legend.edgecolor"] = "black"  # edgeの色を変更
 plt.rcParams["legend.handlelength"] = 1  # 凡例の線の長さを調節
 
+
+def calc_path_headings(path: np.ndarray) -> np.ndarray:
+    if len(path) == 0:
+        return np.array([])
+    if path.shape[1] >= 3:
+        return path[:, 2]
+    if len(path) == 1:
+        return np.array([0.0])
+
+    diffs = np.diff(path[:, :2], axis=0)
+    headings = np.arctan2(diffs[:, 1], diffs[:, 0])
+    headings = np.concatenate([headings, [headings[-1]]])
+    return headings
+
+
+def draw_path_orientation_arrows(
+    ax: plt.Axes,
+    path: np.ndarray,
+    max_arrows: int = 30,
+    color: str = "red",
+    alpha: float = 0.7,
+    label: str = "Path Orientation"
+) -> None:
+    if len(path) == 0:
+        return
+
+    headings = calc_path_headings(path)
+    n = len(path)
+    step = max(1, n // max_arrows)
+    indices = np.arange(0, n, step, dtype=int)
+    if indices[-1] != n - 1:
+        indices = np.append(indices, n - 1)
+
+    x = path[indices, 0]
+    y = path[indices, 1]
+    h = headings[indices]
+
+    x_span = float(np.max(path[:, 0]) - np.min(path[:, 0]))
+    y_span = float(np.max(path[:, 1]) - np.min(path[:, 1]))
+    diag = float(np.hypot(x_span, y_span))
+    arrow_length = 2.0 * max(0.1, 0.03 * diag)
+
+    dx = arrow_length * np.cos(h)
+    dy = arrow_length * np.sin(h)
+
+    ax.quiver(
+        x,
+        y,
+        dx,
+        dy,
+        angles="xy",
+        scale_units="xy",
+        scale=1.0,
+        color=color,
+        alpha=alpha,
+        width=0.0035,
+        label=label
+    )
+
+
 # 軌跡の描画
 def draw_paths(path: np.ndarray, robot_poses_dist: defaultdict, path_name: str):
     print("drawing paths...")
+    result_dir = RESULTS_DIR / path_name
+    result_dir.mkdir(parents=True, exist_ok=True)
     
     fig, ax = plt.subplots()
     ax.set_xlim(np.min(path[:, 0]) - 1, np.max(path[:, 0]) + 1)
@@ -34,6 +101,7 @@ def draw_paths(path: np.ndarray, robot_poses_dist: defaultdict, path_name: str):
 
     # パス
     ax.plot(path[:, 0], path[:, 1], 'k--', label='Path')
+    draw_path_orientation_arrows(ax, path)
 
     # ロボットの位置
     for method_name, robot_poses in robot_poses_dist.items():
@@ -46,7 +114,7 @@ def draw_paths(path: np.ndarray, robot_poses_dist: defaultdict, path_name: str):
     plt.tight_layout()
 
     # グラフを表示
-    plt.savefig(f'../results/{path_name}/paths.png')
+    plt.savefig(result_dir / "paths.png")
     plt.close()
 
 # 速度プロファイルの描画
@@ -59,6 +127,8 @@ def draw_velocity_profile(
     path_name: str
 ):
     print("drawing velocity profiles...")
+    result_dir = RESULTS_DIR / path_name
+    result_dir.mkdir(parents=True, exist_ok=True)
     
     #==================================================================#
     # 1. Translational velocity (並進速度) の描画
@@ -107,9 +177,7 @@ def draw_velocity_profile(
     # ax1.legend()
     plt.tight_layout()
     
-    # 保存用ディレクトリを作成
-    os.makedirs(f'../results/{path_name}', exist_ok=True)
-    plt.savefig(f'../results/{path_name}/{method_name}_translational_velocity_profile.png')
+    plt.savefig(result_dir / f"{method_name}_translational_velocity_profile.png")
     plt.close()
     
     
@@ -159,7 +227,7 @@ def draw_velocity_profile(
     
     # ax2.legend()
     plt.tight_layout()
-    plt.savefig(f'../results/{path_name}/{method_name}_rotational_velocity_profile.png')
+    plt.savefig(result_dir / f"{method_name}_rotational_velocity_profile.png")
     plt.close()
     
     print("Done.")
@@ -167,6 +235,8 @@ def draw_velocity_profile(
 # アニメーションの描画
 def draw_animation(path: np.ndarray, robot_poses: np.ndarray, look_ahead_positions: np.ndarray, method_name:str, path_name: str):
     print("drawing animations...")
+    result_dir = RESULTS_DIR / path_name
+    result_dir.mkdir(parents=True, exist_ok=True)
 
     fig, ax = plt.subplots()
     ax.set_xlim(np.min(path[:, 0]) - 1, np.max(path[:, 0]) + 1)
@@ -178,6 +248,7 @@ def draw_animation(path: np.ndarray, robot_poses: np.ndarray, look_ahead_positio
 
     # プロット要素の初期化
     path_line, = ax.plot(path[:, 0], path[:, 1], 'k--', label='Path')  # パス
+    draw_path_orientation_arrows(ax, path, max_arrows=40, alpha=0.45)
     robot_point, = ax.plot([], [], 'bo', label='Robot')  # ロボット位置
     robot_path, = ax.plot([], [], linewidth=1, color="cyan")  # ロボット位置
     look_ahead_point, = ax.plot([], [], 'ro', label='Look Ahead')  # ルックアヘッド位置
@@ -236,7 +307,14 @@ def draw_animation(path: np.ndarray, robot_poses: np.ndarray, look_ahead_positio
 
     # アニメーションを表示または保存
     # plt.show()
-    ani.save(f'../results/{path_name}/{method_name}.mp4', writer='ffmpeg', fps=int(1/DT))
+    fps = max(1, int(round(1.0 / DT)))
+    output_path = result_dir / f"{method_name}.mp4"
+    try:
+        ani.save(output_path, writer='ffmpeg', fps=fps)
+    except Exception:
+        # ffmpeg が使えない環境では GIF で保存
+        gif_path = result_dir / f"{method_name}.gif"
+        ani.save(gif_path, writer='pillow', fps=fps)
     plt.close()
 
 def plot_single(args):
@@ -247,7 +325,7 @@ def plot_single(args):
     ax.set_xlim(V_MIN - 0.05, V_MAX + 0.05)
     ax.set_ylim(W_MIN - 0.2, W_MAX + 0.2)
     ax.set_xlabel('$v$')
-    ax.set_ylabel('$\omega$')
+    ax.set_ylabel(r'$\omega$')
     ax.set_title('$v\\omega$ plot')
     
     # 速度の上限・下限線
@@ -282,7 +360,7 @@ def plot_single(args):
     ax.plot([dw_vmin, dw_vmax], [dw_wmax, dw_wmax], c="black")
     
     # 曲率に対応する直線
-    ax.axline((0, 0), slope=curvature, color='red', lw=2, label="$\omega={\phi}v$")
+    ax.axline((0, 0), slope=curvature, color='red', lw=2, label=r"$\omega={\phi}v$")
     
     ax.legend()
     ax.set_aspect('equal')
@@ -292,10 +370,12 @@ def plot_single(args):
 
 def draw_vw_plane_plot(robot_velocities: np.ndarray, robot_ref_velocities: np.ndarray, time_stamps: np.ndarray, 
                        curvatures: np.ndarray, regulated_vs: np.ndarray, method_name: str, path_name: str):
+    if cv2 is None:
+        raise ImportError("cv2 is required for draw_vw_plane_plot() but is not installed.")
     
     # 保存先ディレクトリの作成
-    dir_path = f"../results/{path_name}/vw_plot/{method_name}"
-    os.makedirs(dir_path, exist_ok=True)
+    dir_path = RESULTS_DIR / path_name / "vw_plot" / method_name
+    dir_path.mkdir(parents=True, exist_ok=True)
     
     # 各タスクに渡す引数をリストにまとめる
     args_list = []
@@ -308,7 +388,7 @@ def draw_vw_plane_plot(robot_velocities: np.ndarray, robot_ref_velocities: np.nd
             prev_robot_velocity = robot_velocity
         else:
             prev_robot_velocity = robot_velocities[idx - 1]
-        args_list.append((idx, curvature, regulated_v, robot_velocity, robot_ref_velocity, prev_robot_velocity, past_robot_velocities, dir_path))
+        args_list.append((idx, curvature, regulated_v, robot_velocity, robot_ref_velocity, prev_robot_velocity, past_robot_velocities, str(dir_path)))
     
     # ProcessPoolExecutor で並列処理を実行
     with concurrent.futures.ProcessPoolExecutor() as executor:
@@ -316,12 +396,14 @@ def draw_vw_plane_plot(robot_velocities: np.ndarray, robot_ref_velocities: np.nd
     
     # 画像を動画化
     # 画像のpathを取得
-    path = Path(dir_path)
-    image_paths = sorted(path.glob("*.png"))
+    image_paths = sorted(dir_path.glob("*.png"))
+    if len(image_paths) == 0:
+        return
     h, w, _ = cv2.imread(str(image_paths[0])).shape
     fourcc = cv2.VideoWriter_fourcc('m','p','4', 'v')
-    video_path = f"../results/{path_name}/vw_plot/{method_name}.mp4"
-    video = cv2.VideoWriter(video_path, fourcc, int(1//DT), (w, h))
+    video_path = RESULTS_DIR / path_name / "vw_plot" / f"{method_name}.mp4"
+    fps = max(1, int(round(1.0 / DT)))
+    video = cv2.VideoWriter(str(video_path), fourcc, fps, (w, h))
     for image_path in image_paths:
         image = cv2.imread(str(image_path))
         video.write(image)

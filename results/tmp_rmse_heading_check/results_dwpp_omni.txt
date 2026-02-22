@@ -1,0 +1,34 @@
+Method: dwpp_omni
+Cross Track RMSE mean: 0.009426409905651542
+Cross Track RMSE std: 0.0
+
+Method: dwpp_omni_clip
+Cross Track RMSE mean: 0.003639441731964306
+Cross Track RMSE std: 0.0
+
+Method: dwpp_omni
+RMSE with Heading mean: 0.3806487405975004
+RMSE with Heading std: 0.0
+
+Method: dwpp_omni_clip
+RMSE with Heading mean: 0.30713242220513337
+RMSE with Heading std: 0.0
+
+Method: dwpp_omni
+Break constraints rate mean: [0. 0. 0.]
+Break constraints rate std: [0. 0. 0.]
+
+Method: dwpp_omni_clip
+Break constraints rate mean: [0. 0. 0.]
+Break constraints rate std: [0. 0. 0.]
+
+Method: dwpp_omni
+Goal reach time mean [s]: 11.900000000000034
+Goal reach time std [s]: 0.0
+Goal reached ratio: 1/1
+
+Method: dwpp_omni_clip
+Goal reach time mean [s]: 11.750000000000032
+Goal reach time std [s]: 0.0
+Goal reached ratio: 1/1
+
