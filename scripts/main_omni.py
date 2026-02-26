@@ -103,8 +103,6 @@ def simulation_omni(
             distance_to_goal = float(np.linalg.norm(current_pose[:2] - goal_pose_xy))
             if distance_to_goal <= GOAL_REACH_TOLERANCE_DIST_OMNI:
                 break
-            if np.all(np.isclose(current_velocity, 0.0)) and len(robot_velocities) > 1:
-                break
 
             next_velocity_ref, look_ahead_pos, break_constraints_flag, curvature, regulated_v = pure_pursuit(
                 current_pose, current_velocity, path, method_name

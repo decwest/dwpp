@@ -1,8 +1,9 @@
 import numpy as np
 import math
 from config import MIN_LOOK_AHEAD_DISTANCE, MAX_LOOK_AHEAD_DISTANCE, LOOK_AHEAD_TIME, V_MAX, V_MIN, W_MAX, W_MIN, \
-    A_MAX, AW_MAX, DT, APPROACH_VELOCITY_SCALING_DIST, MIN_APPROACH_LINEAR_VELOCITY, GOAL_TORELANCE_DIST, \
-    REGULATED_LINEAR_SCALING_MIN_RADIUS, REGULATED_LINEAR_SCALING_MIN_SPEED
+    A_MAX, AW_MAX, VX_MAX, VX_MIN, VY_MAX, VY_MIN, AX_MAX, AY_MAX, DT, APPROACH_VELOCITY_SCALING_DIST, \
+    MIN_APPROACH_LINEAR_VELOCITY, GOAL_TORELANCE_DIST, REGULATED_LINEAR_SCALING_MIN_RADIUS, \
+    REGULATED_LINEAR_SCALING_MIN_SPEED, K
 
 ACCEL_CONSTRAINT_EPS = 1e-10
 
@@ -20,17 +21,17 @@ def pure_pursuit(current_pose: np.ndarray, current_velocity: np.ndarray, path: n
     if method_name in ["dwpp_omni", "dwpp_omni_clip"]:
         # 全方位版: path は N x 3 ([x, y, theta]) を前提
         look_ahead_pose = calc_look_ahead_pose(current_idx, path, path_distances, look_ahead_distance)
-        ideal_velocity = calc_ideal_velocity_vector_omnidirectional(current_pose, look_ahead_pose)
+        desired_velocity = calc_desired_velocity_vector_omnidirectional(current_pose, look_ahead_pose)
         is_accel = decide_accel_or_decel_omnidirectional(current_idx, path_distances, current_velocity)
         if method_name == "dwpp_omni":
             next_velocity_ref = calc_optimal_velocity_considering_dynamic_window_omnidirectional(
                 current_velocity=current_velocity,
-                ideal_velocity=ideal_velocity,
+                desired_velocity=desired_velocity,
                 is_accel=is_accel
             )
         else:
             # 比較手法: 理想ベクトルをそのまま速度指令値にする
-            next_velocity_ref = ideal_velocity.copy()
+            next_velocity_ref = desired_velocity.copy()
         break_constraints_flag = evaluate_accelaration_constraints_omnidirectional(current_velocity, next_velocity_ref)
         return next_velocity_ref, look_ahead_pose, break_constraints_flag, float("nan"), float("nan")
 
@@ -283,47 +284,67 @@ def calc_look_ahead_pose(current_idx: np.intp, path: np.ndarray, path_distances:
     return np.array([look_ahead_x, look_ahead_y, look_ahead_theta])
 
 
-def calc_ideal_velocity_vector_omnidirectional(current_pose: np.ndarray, look_ahead_pose: np.ndarray) -> np.ndarray:
+def calc_desired_velocity_vector_omnidirectional(current_pose: np.ndarray, look_ahead_pose: np.ndarray) -> np.ndarray:
     # 位置誤差（world）
     dx = look_ahead_pose[0] - current_pose[0]
     dy = look_ahead_pose[1] - current_pose[1]
+    
+    # 距離
+    distance = math.sqrt(dx**2 + dy**2)
 
     # 位置誤差をロボット座標へ変換
     c = math.cos(current_pose[2])
     s = math.sin(current_pose[2])
     ex_body = c * dx + s * dy
     ey_body = -s * dx + c * dy
+    
+    max_vel = np.sqrt(VX_MAX**2 + VY_MAX**2)
+    
+    # 並進方向の速度指令値の算出
+    desired_vx = max_vel * ex_body / (distance + 1e-6)  # 0除算を避けるため、小さな値を加える
+    desired_vy = max_vel * ey_body / (distance + 1e-6)
+
+    # 位置偏差を補正するのに要する時間
+    time_to_goal_position = distance / max_vel
 
     # 姿勢誤差
     e_theta = normalize_angle(look_ahead_pose[2] - current_pose[2])
+    
+    # 姿勢偏差を補正するのに設ける時間
+    time_to_goal_orientation = K * time_to_goal_position
+    
+    # 回転速度の算出
+    desired_w = e_theta / time_to_goal_orientation
 
-    return np.array([ex_body, ey_body, e_theta])
+    return np.array([desired_vx, desired_vy, desired_w])
 
 
 def decide_accel_or_decel_omnidirectional(current_idx: np.intp, path_distances: np.ndarray, current_velocity: np.ndarray) -> bool:
     goal_distance = path_distances[-1] - path_distances[current_idx]
     speed = float(np.linalg.norm(current_velocity[:2]))
-    if A_MAX == 0.0:
+    # 軸別の加速度制約が異なる場合は、保守的に小さい方を使う
+    trans_accel_limit = min(AX_MAX, AY_MAX)
+    if trans_accel_limit <= 0.0:
         return False
-    decel_distance = (speed ** 2) / (2.0 * A_MAX)
+    decel_distance = (speed ** 2) / (2.0 * trans_accel_limit)
     return goal_distance > decel_distance
 
 
 def evaluate_accelaration_constraints_omnidirectional(current_velocity: np.ndarray, next_velocity_ref: np.ndarray) -> list[bool]:
-    limits = np.array([A_MAX, A_MAX, AW_MAX]) * DT
+    limits = np.array([AX_MAX, AY_MAX, AW_MAX]) * DT
     break_constraints = np.abs(next_velocity_ref - current_velocity) > (limits + ACCEL_CONSTRAINT_EPS)
     return [bool(break_constraints[0]), bool(break_constraints[1]), bool(break_constraints[2])]
 
 
 def calc_dynamic_window_bounds_omnidirectional(current_velocity: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     dw_min = np.array([
-        max(current_velocity[0] - A_MAX * DT, -V_MAX),
-        max(current_velocity[1] - A_MAX * DT, -V_MAX),
+        max(current_velocity[0] - AX_MAX * DT, VX_MIN),
+        max(current_velocity[1] - AY_MAX * DT, VY_MIN),
         max(current_velocity[2] - AW_MAX * DT, W_MIN),
     ])
     dw_max = np.array([
-        min(current_velocity[0] + A_MAX * DT, V_MAX),
-        min(current_velocity[1] + A_MAX * DT, V_MAX),
+        min(current_velocity[0] + AX_MAX * DT, VX_MAX),
+        min(current_velocity[1] + AY_MAX * DT, VY_MAX),
         min(current_velocity[2] + AW_MAX * DT, W_MAX),
     ])
     return dw_min, dw_max
@@ -331,31 +352,31 @@ def calc_dynamic_window_bounds_omnidirectional(current_velocity: np.ndarray) -> 
 
 def calc_clipped_velocity_omnidirectional_without_dynamic_window(
     current_velocity: np.ndarray,
-    ideal_velocity: np.ndarray
+    desired_velocity: np.ndarray
 ) -> np.ndarray:
     # 比較手法: 理想ベクトルをDW境界で成分ごとにクリッピング
     dw_min, dw_max = calc_dynamic_window_bounds_omnidirectional(current_velocity)
-    return np.clip(ideal_velocity, dw_min, dw_max)
+    return np.clip(desired_velocity, dw_min, dw_max)
 
 
 def calc_optimal_velocity_considering_dynamic_window_omnidirectional(
     current_velocity: np.ndarray,
-    ideal_velocity: np.ndarray,
+    desired_velocity: np.ndarray,
     is_accel: bool
 ) -> np.ndarray:
     # dynamic window を直方体として構築
     dw_min, dw_max = calc_dynamic_window_bounds_omnidirectional(current_velocity)
 
-    if float(np.linalg.norm(ideal_velocity)) == 0.0:
+    if float(np.linalg.norm(desired_velocity)) == 0.0:
         return np.clip(np.zeros(3), dw_min, dw_max)
 
-    intersects, alpha_min, alpha_max = calc_ray_box_intersection_alpha_range(ideal_velocity, dw_min, dw_max)
+    intersects, alpha_min, alpha_max = calc_ray_box_intersection_alpha_range(desired_velocity, dw_min, dw_max)
     if intersects:
         alpha = alpha_max if is_accel else alpha_min
     else:
-        alpha = calc_closest_alpha_to_box_from_ray(ideal_velocity, dw_min, dw_max, prefer_large_alpha=is_accel)
+        alpha = calc_closest_alpha_to_box_from_ray(desired_velocity, dw_min, dw_max, prefer_large_alpha=is_accel)
 
-    return np.clip(alpha * ideal_velocity, dw_min, dw_max)
+    return np.clip(alpha * desired_velocity, dw_min, dw_max)
 
 
 def calc_ray_box_intersection_alpha_range(ray_direction: np.ndarray, box_min: np.ndarray, box_max: np.ndarray) -> tuple[bool, float, float]:

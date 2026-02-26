@@ -1,5 +1,5 @@
 import numpy as np
-from config import DT, A_MAX, AW_MAX, V_MAX, V_MIN, W_MAX, W_MIN
+from config import DT, A_MAX, AW_MAX, V_MAX, V_MIN, W_MAX, W_MIN, VX_MAX, VX_MIN, VY_MAX, VY_MIN, AX_MAX, AY_MAX
 
 def forward_simulation_differential(current_pose: np.ndarray, current_velocity: np.ndarray, next_velocity_ref: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     
@@ -45,13 +45,14 @@ def forward_simulation_omnidirectional(
     current_pose: np.ndarray,
     current_velocity: np.ndarray,
     next_velocity_ref: np.ndarray,
-    vx_min: float = -V_MAX,
-    vx_max: float = V_MAX,
-    vy_min: float = -V_MAX,
-    vy_max: float = V_MAX,
+    vx_min: float = VX_MIN,
+    vx_max: float = VX_MAX,
+    vy_min: float = VY_MIN,
+    vy_max: float = VY_MAX,
     w_min: float = W_MIN,
     w_max: float = W_MAX,
-    a_xy_max: float = A_MAX,
+    a_x_max: float = AX_MAX,
+    a_y_max: float = AY_MAX,
     aw_max: float = AW_MAX
 ) -> tuple[np.ndarray, np.ndarray]:
     # next_velocity_ref はロボット座標系 [vx, vy, w] を想定
@@ -64,7 +65,8 @@ def forward_simulation_omnidirectional(
         vy_max=vy_max,
         w_min=w_min,
         w_max=w_max,
-        a_xy_max=a_xy_max,
+        a_x_max=a_x_max,
+        a_y_max=a_y_max,
         aw_max=aw_max
     )
 
@@ -82,19 +84,20 @@ def forward_simulation_omnidirectional(
 def calc_accel_constrained_velocity_omnidirectional(
     current_velocity: np.ndarray,
     next_velocity_ref: np.ndarray,
-    vx_min: float = -V_MAX,
-    vx_max: float = V_MAX,
-    vy_min: float = -V_MAX,
-    vy_max: float = V_MAX,
+    vx_min: float = VX_MIN,
+    vx_max: float = VX_MAX,
+    vy_min: float = VY_MIN,
+    vy_max: float = VY_MAX,
     w_min: float = W_MIN,
     w_max: float = W_MAX,
-    a_xy_max: float = A_MAX,
+    a_x_max: float = AX_MAX,
+    a_y_max: float = AY_MAX,
     aw_max: float = AW_MAX
 ) -> np.ndarray:
     # [vx, vy, w] それぞれに速度制約と加速度制約を適用
     velocity_min = np.array([vx_min, vy_min, w_min], dtype=float)
     velocity_max = np.array([vx_max, vy_max, w_max], dtype=float)
-    accel_max = np.array([a_xy_max, a_xy_max, aw_max], dtype=float)
+    accel_max = np.array([a_x_max, a_y_max, aw_max], dtype=float)
 
     upper = np.minimum(current_velocity + accel_max * DT, velocity_max)
     lower = np.maximum(current_velocity - accel_max * DT, velocity_min)

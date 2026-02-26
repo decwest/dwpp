@@ -87,3 +87,30 @@ def straight_line_heading_step_curve(segment_length: float = 1.0, points_per_seg
     theta[-1] = headings_rad[-1]
 
     return np.c_[x, y, theta]
+
+
+def right_angle_polyline_curve(segment_length: float = 0.5, points_per_segment: int = 50) -> np.ndarray:
+    """
+    90度の折れ線経路 (N x 3) を生成する。
+    1辺目: (0, 0) -> (segment_length, 0), 姿勢 0 [rad]
+    2辺目: (segment_length, 0) -> (segment_length, segment_length), 姿勢 pi/2 [rad]
+    """
+    if points_per_segment <= 0:
+        raise ValueError("points_per_segment must be > 0")
+    if segment_length <= 0.0:
+        raise ValueError("segment_length must be > 0")
+
+    x1 = np.linspace(0.0, segment_length, points_per_segment + 1)
+    y1 = np.zeros_like(x1)
+    theta1 = np.zeros_like(x1)
+
+    x2 = np.full(points_per_segment + 1, segment_length)
+    y2 = np.linspace(0.0, segment_length, points_per_segment + 1)
+    theta2 = np.full(points_per_segment + 1, np.pi / 2.0)
+
+    # 折れ点の重複を避けるため2区間目の先頭を除外
+    x = np.concatenate([x1, x2[1:]])
+    y = np.concatenate([y1, y2[1:]])
+    theta = np.concatenate([theta1, theta2[1:]])
+
+    return np.c_[x, y, theta]
