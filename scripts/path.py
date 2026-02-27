@@ -114,3 +114,88 @@ def right_angle_polyline_curve(segment_length: float = 0.5, points_per_segment: 
     theta = np.concatenate([theta1, theta2[1:]])
 
     return np.c_[x, y, theta]
+
+
+def right_angle_polyline_curve_last_segment_heading_minus_pi(
+    segment_length: float = 0.5,
+    points_per_segment: int = 50
+) -> np.ndarray:
+    """
+    path1(90度折れ線)をベースに、最後の1点のみ姿勢角を -pi に設定した経路を生成する。
+    それ以外の点の姿勢角は経路の接線方向に合わせる。
+    """
+    base_path = right_angle_polyline_curve(
+        segment_length=segment_length,
+        points_per_segment=points_per_segment,
+    )
+    path = append_heading_to_path(base_path[:, :2])
+    path[-1, 2] = -np.pi
+
+    return path
+
+
+def _resample_xy_by_arclength(x: np.ndarray, y: np.ndarray, num_points: int) -> tuple[np.ndarray, np.ndarray]:
+    if num_points < 2:
+        raise ValueError("num_points must be >= 2")
+
+    dx = np.diff(x)
+    dy = np.diff(y)
+    ds = np.hypot(dx, dy)
+    s = np.concatenate([[0.0], np.cumsum(ds)])
+    total_length = float(s[-1])
+
+    if total_length <= 1e-12:
+        return (
+            np.linspace(float(x[0]), float(x[-1]), num_points),
+            np.linspace(float(y[0]), float(y[-1]), num_points),
+        )
+
+    s_new = np.linspace(0.0, total_length, num_points)
+    x_new = np.interp(s_new, s, x)
+    y_new = np.interp(s_new, s, y)
+    return x_new, y_new
+
+
+def one_minus_cos_curve(
+    amplitude: float = 1.0,
+    length_x: float = 10.0,
+    num_points: int = 200,
+    cycles: float = 0.5,
+    x0: float = 0.0,
+    y0: float = 0.0,
+    theta0: float = 0.0,
+    resample_arclength: bool = True,
+) -> np.ndarray:
+    """
+    y = A(1 - cos(k(x-x0))) 形状の経路を N x 3 (x, y, theta) で生成する。
+    theta は接線方向（arctan2(dy, dx)）を用いる。
+    """
+    if num_points < 2:
+        raise ValueError("num_points must be >= 2")
+    if length_x <= 0.0:
+        raise ValueError("length_x must be > 0")
+
+    a = float(amplitude)
+    l = float(length_x)
+    k = 2.0 * math.pi * float(cycles) / l
+
+    x = np.linspace(float(x0), float(x0) + l, num_points, dtype=float)
+    u = x - float(x0)
+    y = float(y0) + a * (1.0 - np.cos(k * u))
+
+    if abs(theta0) > 0.0:
+        c = math.cos(theta0)
+        s = math.sin(theta0)
+        x_shift = x - float(x0)
+        y_shift = y - float(y0)
+        x = float(x0) + c * x_shift - s * y_shift
+        y = float(y0) + s * x_shift + c * y_shift
+
+    if resample_arclength:
+        x, y = _resample_xy_by_arclength(x, y, num_points)
+
+    dx = np.gradient(x)
+    dy = np.gradient(y)
+    theta = np.arctan2(dy, dx)
+
+    return np.c_[x, y, theta]

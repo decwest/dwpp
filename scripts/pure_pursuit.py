@@ -18,7 +18,7 @@ def pure_pursuit(current_pose: np.ndarray, current_velocity: np.ndarray, path: n
     # calc look ahead distance (Adaptive Pure Pursuit)
     look_ahead_distance = calc_look_ahead_distance(current_velocity, method_name)
 
-    if method_name in ["dwpp_omni", "dwpp_omni_clip"]:
+    if method_name in ["dwpp_omni", "dwpp_omni_clip", "dwpp_omni_clip_min_l", "dwpp_omni_clip_max_l"]:
         # 全方位版: path は N x 3 ([x, y, theta]) を前提
         look_ahead_pose = calc_look_ahead_pose(current_idx, path, path_distances, look_ahead_distance)
         desired_velocity = calc_desired_velocity_vector_omnidirectional(current_pose, look_ahead_pose)
@@ -111,6 +111,11 @@ def calc_path_distances(path: np.ndarray) -> np.ndarray:
 
 def calc_look_ahead_distance(current_velocity: np.ndarray, method_name: str) -> float:
     # calc look ahead distance
+    if method_name == "dwpp_omni_clip_min_l":
+        return MIN_LOOK_AHEAD_DISTANCE
+    if method_name == "dwpp_omni_clip_max_l":
+        return MAX_LOOK_AHEAD_DISTANCE
+
     if method_name in ["app", "rpp", "dwpp", "dwpp_wo_rpp", "dwpp_omni", "dwpp_omni_clip"]:
         if method_name in ["dwpp_omni", "dwpp_omni_clip"]:
             current_speed = float(np.linalg.norm(current_velocity[:2]))

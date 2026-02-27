@@ -6,7 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
-from config import DT, GOAL_REACH_TOLERANCE_DIST_OMNI
+from config import DT, GOAL_REACH_TOLERANCE_DIST_OMNI, GOAL_REACH_TOLERANCE_HEADING
 from path import step_curves, straight_line_heading_step_curve
 from pure_pursuit import pure_pursuit
 from robot import forward_simulation_omnidirectional
@@ -22,13 +22,32 @@ def calc_goal_reach_time(
     robot_poses: np.ndarray,
     time_stamps: np.ndarray,
     goal_pose: np.ndarray,
-    goal_tolerance_dist: float
+    goal_tolerance_dist: float,
+    goal_tolerance_heading: float,
 ) -> float:
     distances_to_goal = np.linalg.norm(robot_poses[:, :2] - goal_pose[:2], axis=1)
-    reached_indices = np.where(distances_to_goal <= goal_tolerance_dist)[0]
+    heading_errors = np.abs(normalize_angle(robot_poses[:, 2] - goal_pose[2]))
+    reached_indices = np.where(
+        (distances_to_goal <= goal_tolerance_dist) & (heading_errors <= goal_tolerance_heading)
+    )[0]
     if len(reached_indices) == 0:
         return float("nan")
     return float(time_stamps[reached_indices[0]])
+
+
+def normalize_angle(angle: np.ndarray) -> np.ndarray:
+    return (angle + np.pi) % (2.0 * np.pi) - np.pi
+
+
+def is_goal_reached(
+    current_pose: np.ndarray,
+    goal_pose: np.ndarray,
+    goal_tolerance_dist: float,
+    goal_tolerance_heading: float,
+) -> bool:
+    distance_to_goal = float(np.linalg.norm(current_pose[:2] - goal_pose[:2]))
+    heading_error = float(abs(normalize_angle(current_pose[2] - goal_pose[2])))
+    return (distance_to_goal <= goal_tolerance_dist) and (heading_error <= goal_tolerance_heading)
 
 
 def write_path_summary_text(
@@ -74,7 +93,7 @@ def simulation_omni(
     draw: bool,
     animation: bool
 ) -> tuple[dict, dict, dict, dict]:
-    goal_pose_xy = path[-1, :2]
+    goal_pose = path[-1, :3]
     robot_poses_dict = defaultdict(list)
     robot_velocities_dict = defaultdict(list)
     robot_ref_velocities_dict = defaultdict(list)
@@ -100,8 +119,12 @@ def simulation_omni(
         sim_start_time = perf_counter()
 
         for _ in range(MAX_SIM_STEPS):
-            distance_to_goal = float(np.linalg.norm(current_pose[:2] - goal_pose_xy))
-            if distance_to_goal <= GOAL_REACH_TOLERANCE_DIST_OMNI:
+            if is_goal_reached(
+                current_pose,
+                goal_pose,
+                GOAL_REACH_TOLERANCE_DIST_OMNI,
+                GOAL_REACH_TOLERANCE_HEADING,
+            ):
                 break
 
             next_velocity_ref, look_ahead_pos, break_constraints_flag, curvature, regulated_v = pure_pursuit(
@@ -144,7 +167,8 @@ def simulation_omni(
             np.array(robot_poses_dict[method_name]),
             np.array(time_stamp_dict[method_name]),
             path[-1],
-            GOAL_REACH_TOLERANCE_DIST_OMNI
+            GOAL_REACH_TOLERANCE_DIST_OMNI,
+            GOAL_REACH_TOLERANCE_HEADING,
         )
 
     result_path = RESULTS_DIR / path_name

@@ -14,8 +14,27 @@ import matplotlib as mpl
 import numpy as np
 from scipy.spatial.distance import cdist
 
-from config import DT, GOAL_REACH_TOLERANCE_DIST_OMNI, VX_MAX, VX_MIN, VY_MAX, VY_MIN, W_MAX, W_MIN
-from path import right_angle_polyline_curve, straight_line_heading_step_curve
+from config import (
+    A_MAX,
+    AW_MAX,
+    DT,
+    GOAL_REACH_TOLERANCE_DIST_OMNI,
+    GOAL_REACH_TOLERANCE_HEADING,
+    V_MAX,
+    V_MIN,
+    VX_MAX,
+    VX_MIN,
+    VY_MAX,
+    VY_MIN,
+    W_MAX,
+    W_MIN,
+)
+from path import (
+    one_minus_cos_curve,
+    right_angle_polyline_curve,
+    right_angle_polyline_curve_last_segment_heading_minus_pi,
+    straight_line_heading_step_curve,
+)
 from pure_pursuit import pure_pursuit
 from robot import forward_simulation_differential, forward_simulation_omnidirectional
 
@@ -53,13 +72,45 @@ class SimulationResult:
 
 METHOD_SPECS = [
     MethodSpec("dwpp", "DWPP for Diff-drive", False, "tab:blue"),
-    MethodSpec("dwpp_omni_clip", "VP for Omni", True, "tab:orange"),
+    MethodSpec("dwpp_omni_clip_min_l", "VP for Omni (min L)", True, "tab:orange"),
+    MethodSpec("dwpp_omni_clip_max_l", "VP for Omni (max L)", True, "tab:red"),
     MethodSpec("dwpp_omni", "DWVP for Omni", True, "tab:green"),
 ]
+POST_GOAL_HEADING_KP_DIFF = 2.0
 
 
 def normalize_angle(angle: np.ndarray) -> np.ndarray:
     return (angle + np.pi) % (2.0 * np.pi) - np.pi
+
+
+def is_goal_reached(
+    pose: np.ndarray,
+    goal_pose: np.ndarray,
+    goal_tolerance_dist: float,
+    goal_tolerance_heading: float,
+) -> bool:
+    pos_error = float(np.linalg.norm(pose[:2] - goal_pose[:2]))
+    heading_error = float(abs(normalize_angle(pose[2] - goal_pose[2])))
+    return (pos_error <= goal_tolerance_dist) and (heading_error <= goal_tolerance_heading)
+
+
+def calc_goal_alignment_velocity_ref_diffdrive(
+    current_pose: np.ndarray,
+    current_velocity: np.ndarray,
+    goal_pose: np.ndarray,
+) -> np.ndarray:
+    heading_error = float(normalize_angle(goal_pose[2] - current_pose[2]))
+    w_target = float(np.clip(POST_GOAL_HEADING_KP_DIFF * heading_error, W_MIN, W_MAX))
+
+    # 加速度制約を満たす範囲で、v は 0、w は heading 誤差方向へ
+    v_lower = max(float(current_velocity[0]) - A_MAX * DT, V_MIN)
+    v_upper = min(float(current_velocity[0]) + A_MAX * DT, V_MAX)
+    w_lower = max(float(current_velocity[1]) - AW_MAX * DT, W_MIN)
+    w_upper = min(float(current_velocity[1]) + AW_MAX * DT, W_MAX)
+
+    v_ref = float(np.clip(0.0, v_lower, v_upper))
+    w_ref = float(np.clip(w_target, w_lower, w_upper))
+    return np.array([v_ref, w_ref], dtype=float)
 
 
 def calc_path_headings(path: np.ndarray) -> np.ndarray:
@@ -87,10 +138,11 @@ def convert_velocity_to_vx_vy_w(spec: MethodSpec, velocities_raw: np.ndarray) ->
 def simulate_single_method(
     path: np.ndarray,
     method_spec: MethodSpec,
-    goal_tolerance: float,
+    goal_tolerance_dist: float,
+    goal_tolerance_heading: float,
     max_sim_steps: int
 ) -> SimulationResult:
-    goal_xy = path[-1, :2]
+    goal_pose = path[-1, :3]
     current_pose = np.array([0.0, 0.0, 0.0], dtype=float)
     current_velocity = np.zeros(3 if method_spec.is_omni else 2, dtype=float)
 
@@ -101,15 +153,24 @@ def simulate_single_method(
     times = [0.0]
 
     for _ in range(max_sim_steps):
-        if float(np.linalg.norm(current_pose[:2] - goal_xy)) <= goal_tolerance:
+        if is_goal_reached(current_pose, goal_pose, goal_tolerance_dist, goal_tolerance_heading):
             break
 
-        next_velocity_ref, _, break_flag, _, _ = pure_pursuit(
-            current_pose,
-            current_velocity,
-            path,
-            method_spec.key
-        )
+        position_error_to_goal = float(np.linalg.norm(current_pose[:2] - goal_pose[:2]))
+        if (method_spec.key == "dwpp") and (position_error_to_goal <= goal_tolerance_dist):
+            next_velocity_ref = calc_goal_alignment_velocity_ref_diffdrive(
+                current_pose=current_pose,
+                current_velocity=current_velocity,
+                goal_pose=goal_pose,
+            )
+            break_flag = [False, False]
+        else:
+            next_velocity_ref, _, break_flag, _, _ = pure_pursuit(
+                current_pose,
+                current_velocity,
+                path,
+                method_spec.key
+            )
 
         if method_spec.is_omni:
             next_pose, next_velocity = forward_simulation_omnidirectional(
@@ -144,7 +205,12 @@ def simulate_single_method(
     )
 
 
-def calc_metrics(path: np.ndarray, result: SimulationResult, goal_tolerance: float) -> dict[str, float]:
+def calc_metrics(
+    path: np.ndarray,
+    result: SimulationResult,
+    goal_tolerance_dist: float,
+    goal_tolerance_heading: float,
+) -> dict[str, float]:
     path_xy = path[:, :2]
     path_headings = calc_path_headings(path)
     robot_xy = result.poses[:, :2]
@@ -161,7 +227,10 @@ def calc_metrics(path: np.ndarray, result: SimulationResult, goal_tolerance: flo
     violation_rate = float(np.mean(np.any(flags, axis=1)) * 100.0)
 
     goal_distances = np.linalg.norm(robot_xy - path[-1, :2], axis=1)
-    reached_indices = np.where(goal_distances <= goal_tolerance)[0]
+    goal_heading_errors = np.abs(normalize_angle(robot_headings - path[-1, 2]))
+    reached_indices = np.where(
+        (goal_distances <= goal_tolerance_dist) & (goal_heading_errors <= goal_tolerance_heading)
+    )[0]
     travel_time = float(result.times[reached_indices[0]]) if len(reached_indices) > 0 else float("nan")
 
     return {
@@ -626,7 +695,8 @@ def run_benchmark_for_path(
     path: np.ndarray,
     path_name: str,
     output_root: Path,
-    goal_tolerance: float,
+    goal_tolerance_dist: float,
+    goal_tolerance_heading: float,
     max_sim_steps: int
 ) -> list[dict[str, str | float]]:
     path_dir = output_root / path_name
@@ -641,7 +711,8 @@ def run_benchmark_for_path(
         result = simulate_single_method(
             path=path,
             method_spec=spec,
-            goal_tolerance=goal_tolerance,
+            goal_tolerance_dist=goal_tolerance_dist,
+            goal_tolerance_heading=goal_tolerance_heading,
             max_sim_steps=max_sim_steps,
         )
         results[spec.key] = result
@@ -652,7 +723,12 @@ def run_benchmark_for_path(
         np.save(path_dir / f"{spec.key}_break_flags.npy", result.break_flags)
         np.save(path_dir / f"{spec.key}_times.npy", result.times)
 
-        metrics = calc_metrics(path, result, goal_tolerance)
+        metrics = calc_metrics(
+            path,
+            result,
+            goal_tolerance_dist=goal_tolerance_dist,
+            goal_tolerance_heading=goal_tolerance_heading,
+        )
         row = {"Method": spec.label}
         row.update(metrics)
         rows.append(row)
@@ -717,13 +793,27 @@ def main() -> None:
     parser.add_argument("--right-angle-segment-length", type=float, default=1.0)
     parser.add_argument("--heading-segment-length", type=float, default=0.5)
     parser.add_argument("--points-per-segment", type=int, default=100)
+    parser.add_argument("--one-minus-cos-amplitude", type=float, default=1.0)
+    parser.add_argument("--one-minus-cos-length-x", type=float, default=2.0)
+    parser.add_argument("--one-minus-cos-cycles", type=float, default=1.5)
+    parser.add_argument("--one-minus-cos-num-points", type=int, default=None)
     parser.add_argument("--goal-tolerance", type=float, default=GOAL_REACH_TOLERANCE_DIST_OMNI)
+    parser.add_argument(
+        "--goal-heading-tolerance-deg",
+        type=float,
+        default=float(np.rad2deg(GOAL_REACH_TOLERANCE_HEADING)),
+    )
     parser.add_argument("--max-sim-steps", type=int, default=DEFAULT_MAX_SIM_STEPS)
     parser.add_argument("--output-root", type=Path, default=DEFAULT_RESULTS_ROOT)
     args = parser.parse_args()
 
     output_root = args.output_root
     output_root.mkdir(parents=True, exist_ok=True)
+    goal_tolerance_heading = float(np.deg2rad(args.goal_heading_tolerance_deg))
+
+    one_minus_cos_num_points = args.one_minus_cos_num_points
+    if one_minus_cos_num_points is None:
+        one_minus_cos_num_points = 5 * args.points_per_segment + 1
 
     paths = {
         "path1_right_angle_90": right_angle_polyline_curve(
@@ -734,6 +824,17 @@ def main() -> None:
             segment_length=args.heading_segment_length,
             points_per_segment=args.points_per_segment,
         ),
+        "path3_right_angle_90_last_heading_minus_pi": right_angle_polyline_curve_last_segment_heading_minus_pi(
+            segment_length=args.right_angle_segment_length,
+            points_per_segment=args.points_per_segment,
+        ),
+        "path4_one_minus_cos": one_minus_cos_curve(
+            amplitude=args.one_minus_cos_amplitude,
+            length_x=args.one_minus_cos_length_x,
+            num_points=one_minus_cos_num_points,
+            cycles=args.one_minus_cos_cycles,
+            resample_arclength=True,
+        ),
     }
 
     overall_rows: list[dict[str, str | float]] = []
@@ -742,7 +843,8 @@ def main() -> None:
             path=path,
             path_name=path_name,
             output_root=output_root,
-            goal_tolerance=args.goal_tolerance,
+            goal_tolerance_dist=args.goal_tolerance,
+            goal_tolerance_heading=goal_tolerance_heading,
             max_sim_steps=args.max_sim_steps,
         )
         for row in rows:

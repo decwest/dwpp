@@ -3,12 +3,48 @@ from path import step_curves
 from robot import forward_simulation_differential, forward_simulation_omnidirectional
 from time import perf_counter
 import numpy as np
-from config import DT, method_name_list
+from config import DT, method_name_list, GOAL_TORELANCE_DIST, A_MAX, AW_MAX, V_MIN, V_MAX, W_MIN, W_MAX
 from draw import draw_animation, draw_paths, draw_velocity_profile, draw_vw_plane_plot
 from stats import calc_break_constraints_rate, calc_heading_rmse, calc_rmse
 from collections import defaultdict
 import concurrent.futures
 import pickle
+
+POST_GOAL_HEADING_KP_DIFF = 2.0
+
+
+def normalize_angle(angle: float) -> float:
+    return (angle + np.pi) % (2.0 * np.pi) - np.pi
+
+
+def calc_goal_heading(path: np.ndarray) -> float:
+    if path.shape[1] >= 3:
+        return float(path[-1, 2])
+    if len(path) <= 1:
+        return 0.0
+    delta = path[-1, :2] - path[-2, :2]
+    if float(np.linalg.norm(delta)) <= 1e-12:
+        return 0.0
+    return float(np.arctan2(delta[1], delta[0]))
+
+
+def calc_goal_alignment_velocity_ref_diffdrive(
+    current_pose: np.ndarray,
+    current_velocity: np.ndarray,
+    goal_heading: float,
+) -> np.ndarray:
+    heading_error = normalize_angle(goal_heading - current_pose[2])
+    w_target = float(np.clip(POST_GOAL_HEADING_KP_DIFF * heading_error, W_MIN, W_MAX))
+
+    v_lower = max(float(current_velocity[0]) - A_MAX * DT, V_MIN)
+    v_upper = min(float(current_velocity[0]) + A_MAX * DT, V_MAX)
+    w_lower = max(float(current_velocity[1]) - AW_MAX * DT, W_MIN)
+    w_upper = min(float(current_velocity[1]) + AW_MAX * DT, W_MAX)
+
+    v_ref = float(np.clip(0.0, v_lower, v_upper))
+    w_ref = float(np.clip(w_target, w_lower, w_upper))
+    return np.array([v_ref, w_ref], dtype=float)
+
 
 def simulation(path: np.ndarray, path_name: str, initial_pose: np.ndarray, draw: bool, animation: bool)-> tuple[dict, dict, dict]:
     # 一つの曲線に対するシミュレーションと描画
@@ -41,14 +77,34 @@ def simulation(path: np.ndarray, path_name: str, initial_pose: np.ndarray, draw:
         time_stamps = [0.0]
         
         sim_start_time = perf_counter()
+        goal_xy = path[-1, :2]
+        goal_heading = calc_goal_heading(path)
         
         while True:
             # 終了条件
             if np.all(np.isclose(current_velocity, 0.0)) and len(robot_velocities) > 1:
                 break
-            
-            next_velocity_ref, look_ahead_pos, break_constraints_flag,\
-                curvature, regulated_v = pure_pursuit(current_pose, current_velocity, path, method_name)
+
+            is_dwpp_goal_align = (
+                (method_name == "dwpp")
+                and (float(np.linalg.norm(current_pose[:2] - goal_xy)) <= GOAL_TORELANCE_DIST)
+                and (abs(normalize_angle(goal_heading - current_pose[2])) > 1e-3)
+            )
+
+            if is_dwpp_goal_align:
+                next_velocity_ref = calc_goal_alignment_velocity_ref_diffdrive(
+                    current_pose=current_pose,
+                    current_velocity=current_velocity,
+                    goal_heading=goal_heading,
+                )
+                look_ahead_pos = path[-1, :2]
+                break_constraints_flag = [False, False]
+                curvature = 0.0
+                regulated_v = 0.0
+            else:
+                next_velocity_ref, look_ahead_pos, break_constraints_flag,\
+                    curvature, regulated_v = pure_pursuit(current_pose, current_velocity, path, method_name)
+
             if is_omni:
                 next_pose, next_velocity = forward_simulation_omnidirectional(current_pose, current_velocity, next_velocity_ref)
             else:
