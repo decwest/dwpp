@@ -72,9 +72,9 @@ class SimulationResult:
 
 METHOD_SPECS = [
     MethodSpec("dwpp", "DWPP for Diff-drive", False, "tab:blue"),
-    MethodSpec("dwpp_omni_clip_min_l", "VP for Omni (min L)", True, "tab:orange"),
-    MethodSpec("dwpp_omni_clip_max_l", "VP for Omni (max L)", True, "tab:red"),
-    MethodSpec("dwpp_omni", "DWVP for Omni", True, "tab:green"),
+    MethodSpec("dwpp_omni_clip_min_l", "VP for Omni (min L)", True, "tab:green"),
+    MethodSpec("dwpp_omni_clip_max_l", "VP for Omni (max L)", True, "tab:orange"),
+    MethodSpec("dwpp_omni", "DWVP for Omni", True, "tab:red"),
 ]
 POST_GOAL_HEADING_KP_DIFF = 2.0
 
@@ -248,10 +248,10 @@ def format_value(value: float, digits: int = 4) -> str:
     return "N/A"
 
 
-def write_metrics_tables(path_dir: Path, rows: list[dict[str, str | float]]) -> None:
+def write_metrics_tables(path_dir: Path, rows: list[dict[str, str | float]], figure_prefix: str = "") -> None:
     csv_path = path_dir / "metrics_table.csv"
     md_path = path_dir / "metrics_table.md"
-    png_path = path_dir / "metrics_table.png"
+    png_path = path_dir / f"{figure_prefix}metrics_table.png"
 
     headers = [
         "Method",
@@ -314,7 +314,7 @@ def draw_path_heading_arrows(ax: plt.Axes, path: np.ndarray, color: str = "black
     n = len(path)
     if n == 0:
         return
-    step = max(1, n // 30)
+    step = max(1, n // 24)
     indices = np.arange(0, n, step, dtype=int)
     if indices[-1] != n - 1:
         indices = np.append(indices, n - 1)
@@ -322,7 +322,7 @@ def draw_path_heading_arrows(ax: plt.Axes, path: np.ndarray, color: str = "black
     span_x = float(np.max(path[:, 0]) - np.min(path[:, 0]))
     span_y = float(np.max(path[:, 1]) - np.min(path[:, 1]))
     diag = float(np.hypot(span_x, span_y))
-    arrow_length = 1.0 * max(0.1, 0.03 * diag)
+    arrow_length = max(0.24, 0.040 * diag)
 
     x = path[indices, 0]
     y = path[indices, 1]
@@ -339,7 +339,10 @@ def draw_path_heading_arrows(ax: plt.Axes, path: np.ndarray, color: str = "black
         scale=1.0,
         color=color,
         alpha=1.00,
-        width=0.003,
+        width=0.006,
+        headwidth=5.0,
+        headlength=6.0,
+        headaxislength=5.0,
         label="Path Heading"
     )
 
@@ -387,13 +390,13 @@ def calc_tracking_layout(
     data_aspect = x_span / max(y_span, 1e-6)
 
     if data_aspect >= 1.6:
-        fig_height = 4.2
-        fig_width = min(15.0, max(10.0, fig_height * data_aspect))
-        margin_ratio = 0.10
+        fig_height = 3.0
+        fig_width = min(10.5, max(7.0, fig_height * data_aspect))
+        margin_ratio = 0.08
     else:
-        fig_width = 8.5
-        fig_height = 8.5
-        margin_ratio = 0.15
+        fig_width = 3.0
+        fig_height = 3.0
+        margin_ratio = 0.12
 
     return (fig_width, fig_height), min_span, margin_ratio
 
@@ -402,13 +405,14 @@ def save_tracking_plots_by_method(
     path: np.ndarray,
     method_specs: list[MethodSpec],
     results: dict[str, SimulationResult],
-    output_dir: Path
+    output_dir: Path,
+    file_prefix: str = "",
 ) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     span_x = float(np.max(path[:, 0]) - np.min(path[:, 0]))
     span_y = float(np.max(path[:, 1]) - np.min(path[:, 1]))
     diag = float(np.hypot(span_x, span_y))
-    pose_arrow_length = max(0.05, 0.04 * diag)
+    pose_arrow_length = max(0.06, 0.055 * diag)
     xy_arrays = [path[:, :2]]
     for spec in method_specs:
         xy_arrays.append(results[spec.key].poses[:, :2])
@@ -416,11 +420,11 @@ def save_tracking_plots_by_method(
 
     for spec in method_specs:
         fig, ax = plt.subplots(figsize=fig_size)
-        ax.plot(path[:, 0], path[:, 1], "k--", linewidth=1.5, label="Reference Path")
+        ax.plot(path[:, 0], path[:, 1], "k--", linewidth=1.1, label="Reference Path")
         draw_path_heading_arrows(ax, path)
 
         poses = results[spec.key].poses
-        ax.plot(poses[:, 0], poses[:, 1], color=spec.color, linewidth=1.8, label=spec.label)
+        ax.plot(poses[:, 0], poses[:, 1], color=spec.color, linewidth=1.0, label=spec.label)
 
         step = max(1, len(poses) // 25)
         indices = np.arange(0, len(poses), step, dtype=int)
@@ -438,27 +442,19 @@ def save_tracking_plots_by_method(
             scale_units="xy",
             scale=1.0,
             color=spec.color,
-            alpha=0.65,
-            width=0.0035,
+            alpha=1.00,
+            width=0.0055,
+            headwidth=4.5,
+            headlength=5.5,
+            headaxislength=4.5,
         )
 
         set_equal_axis_with_min_span(ax, xy_arrays, min_span=min_span, margin_ratio=margin_ratio)
-        ax.set_title(f"Tracking Pose Sequence ({spec.label})")
-        ax.set_xlabel("X [m]")
-        ax.set_ylabel("Y [m]")
+        ax.set_xlabel("$x$ [m]")
+        ax.set_ylabel("$y$ [m]")
         ax.grid(True)
-        handles, labels = ax.get_legend_handles_labels()
-        ax.legend(
-            handles,
-            labels,
-            loc="lower center",
-            bbox_to_anchor=(0.5, 1.02),
-            ncol=max(2, min(4, len(labels))),
-            frameon=True,
-        )
-
-        plt.tight_layout(rect=(0.0, 0.0, 1.0, 0.88))
-        fig.savefig(output_dir / f"tracking_poses_{spec.key}.png", dpi=200)
+        plt.tight_layout()
+        fig.savefig(output_dir / f"{file_prefix}tracking_poses_{spec.key}.png", dpi=200)
         plt.close(fig)
 
 
@@ -474,16 +470,16 @@ def save_tracking_plot_overlaid(
     fig_size, min_span, margin_ratio = calc_tracking_layout(xy_arrays, min_span_default=1.0)
 
     fig, ax = plt.subplots(figsize=fig_size)
-    ax.plot(path[:, 0], path[:, 1], "k--", linewidth=1.5, label="Reference Path")
+    ax.plot(path[:, 0], path[:, 1], "k--", linewidth=1.1, label="Reference Path")
     draw_path_heading_arrows(ax, path)
 
     span_x = float(np.max(path[:, 0]) - np.min(path[:, 0]))
     span_y = float(np.max(path[:, 1]) - np.min(path[:, 1]))
     diag = float(np.hypot(span_x, span_y))
-    pose_arrow_length = max(0.05, 0.04 * diag)
+    pose_arrow_length = max(0.06, 0.055 * diag)
     for spec in method_specs:
         poses = results[spec.key].poses
-        ax.plot(poses[:, 0], poses[:, 1], color=spec.color, linewidth=1.8, label=spec.label)
+        ax.plot(poses[:, 0], poses[:, 1], color=spec.color, linewidth=1.0, label=spec.label)
 
         step = max(1, len(poses) // 25)
         indices = np.arange(0, len(poses), step, dtype=int)
@@ -501,34 +497,28 @@ def save_tracking_plot_overlaid(
             scale_units="xy",
             scale=1.0,
             color=spec.color,
-            alpha=0.65,
-            width=0.0035,
+            alpha=1.00,
+            width=0.0055,
+            headwidth=4.5,
+            headlength=5.5,
+            headaxislength=4.5,
         )
 
     set_equal_axis_with_min_span(ax, xy_arrays, min_span=min_span, margin_ratio=margin_ratio)
-    ax.set_title("Tracking Pose Sequence")
-    ax.set_xlabel("X [m]")
-    ax.set_ylabel("Y [m]")
+    ax.set_xlabel("$x$ [m]")
+    ax.set_ylabel("$y$ [m]")
     ax.grid(True)
-    handles, labels = ax.get_legend_handles_labels()
-    ax.legend(
-        handles,
-        labels,
-        loc="lower center",
-        bbox_to_anchor=(0.5, 1.02),
-        ncol=max(2, min(5, len(labels))),
-        frameon=True,
-    )
-
-    plt.tight_layout(rect=(0.0, 0.0, 1.0, 0.88))
+    plt.tight_layout()
     fig.savefig(output_path, dpi=200)
+    fig.savefig(output_path.with_suffix(".pdf"), bbox_inches="tight")
     plt.close(fig)
 
 
 def save_velocity_profiles_by_method(
     method_specs: list[MethodSpec],
     results: dict[str, SimulationResult],
-    output_dir: Path
+    output_dir: Path,
+    file_prefix: str = "",
 ) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -542,52 +532,59 @@ def save_velocity_profiles_by_method(
         if len(result.times) > 0:
             time_max = max(time_max, float(result.times[-1]))
 
-    axis_limits = [
-        (VX_MIN, VX_MAX),
-        (VY_MIN, VY_MAX),
-        (W_MIN, W_MAX),
-    ]
-    y_limits = []
-    for idx, (limit_min, limit_max) in enumerate(axis_limits):
-        values_min = [limit_min]
-        values_max = [limit_max]
-        for spec in method_specs:
-            _, v_real, v_ref = converted_cache[spec.key]
-            values_min.extend([float(np.min(v_real[:, idx])), float(np.min(v_ref[:, idx]))])
-            values_max.extend([float(np.max(v_real[:, idx])), float(np.max(v_ref[:, idx]))])
-        y_min = min(values_min)
-        y_max = max(values_max)
-        span = max(y_max - y_min, 1e-6)
-        margin = 0.08 * span
-        y_limits.append((y_min - margin, y_max + margin))
+    # 上段(vx/vy重ね描き)の縦軸
+    values_min_v = [VX_MIN, VY_MIN]
+    values_max_v = [VX_MAX, VY_MAX]
+    for spec in method_specs:
+        _, v_real, v_ref = converted_cache[spec.key]
+        values_min_v.extend([
+            float(np.min(v_real[:, 0])), float(np.min(v_ref[:, 0])),
+            float(np.min(v_real[:, 1])), float(np.min(v_ref[:, 1])),
+        ])
+        values_max_v.extend([
+            float(np.max(v_real[:, 0])), float(np.max(v_ref[:, 0])),
+            float(np.max(v_real[:, 1])), float(np.max(v_ref[:, 1])),
+        ])
+    y_min_v = min(values_min_v)
+    y_max_v = max(values_max_v)
+    span_v = max(y_max_v - y_min_v, 1e-6)
+    y_lim_v = (y_min_v - 0.08 * span_v, y_max_v + 0.08 * span_v)
+
+    # 下段(omega)の縦軸は制約値近傍に固定
+    omega_span = max(W_MAX - W_MIN, 1e-6)
+    omega_margin = 0.08 * omega_span
+    y_lim_w = (W_MIN - omega_margin, W_MAX + omega_margin)
 
     for spec in method_specs:
         result, v_real, v_ref = converted_cache[spec.key]
 
-        fig, axes = plt.subplots(3, 1, figsize=(10, 8), sharex=True)
-        labels = [("vx [m/s]", 0), ("vy [m/s]", 1), ("omega [rad/s]", 2)]
-        for ax, (ylabel, idx), (_, limit_max), y_lim in zip(axes, labels, axis_limits, y_limits):
-            ax.plot(result.times, v_ref[:, idx], color="red", linewidth=1.4, label="Command")
-            ax.plot(result.times, v_real[:, idx], color="blue", linewidth=1.4, label="Actual")
-            ax.axhline(limit_max, color="black", linestyle="--", linewidth=1.1, label="Max Speed")
-            ax.set_ylabel(ylabel)
-            ax.set_xlim(0.0, time_max if time_max > 0.0 else 1.0)
-            ax.set_ylim(*y_lim)
-            ax.grid(True)
+        fig, axes = plt.subplots(2, 1, figsize=(2.8, 2.8), sharex=True)
 
-        axes[0].set_title(f"Velocity Profiles ({spec.label})")
-        axes[-1].set_xlabel("Time [s]")
-        handles, legend_labels = axes[0].get_legend_handles_labels()
-        fig.legend(
-            handles,
-            legend_labels,
-            loc="upper center",
-            bbox_to_anchor=(0.5, 0.98),
-            ncol=2,
-            frameon=True,
-        )
-        plt.tight_layout(rect=(0.0, 0.0, 1.0, 0.92))
-        fig.savefig(output_dir / f"velocity_profiles_{spec.key}.png", dpi=200)
+        # 上段: vx / vy を同一キャンバスに重ね描き（実線: vx, 破線: vy）
+        axes[0].plot(result.times, v_ref[:, 0], color="red", linewidth=1.5)
+        axes[0].plot(result.times, v_real[:, 0], color="blue", linewidth=1.5)
+        axes[0].plot(result.times, v_ref[:, 1], color="red", linewidth=1.5, linestyle="--")
+        axes[0].plot(result.times, v_real[:, 1], color="blue", linewidth=1.5, linestyle="--")
+        axes[0].axhline(VX_MAX, color="black", linestyle="--", linewidth=0.8)
+        if abs(VY_MAX - VX_MAX) > 1e-9:
+            axes[0].axhline(VY_MAX, color="0.35", linestyle="--", linewidth=0.8)
+        axes[0].set_ylabel(r"$v_x, v_y$ [m/s]")
+        axes[0].set_xlim(0.0, time_max if time_max > 0.0 else 1.0)
+        axes[0].set_ylim(*y_lim_v)
+        axes[0].grid(True)
+
+        # 下段: omega
+        axes[1].plot(result.times, v_ref[:, 2], color="red", linewidth=1.5)
+        axes[1].plot(result.times, v_real[:, 2], color="blue", linewidth=1.5)
+        axes[1].axhline(W_MAX, color="black", linestyle="--", linewidth=0.8)
+        axes[1].set_ylabel(r"$\omega$ [rad/s]")
+        axes[1].set_xlim(0.0, time_max if time_max > 0.0 else 1.0)
+        axes[1].set_ylim(*y_lim_w)
+        axes[1].grid(True)
+        axes[1].set_xlabel("Time [s]")
+        plt.tight_layout()
+        fig.savefig(output_dir / f"{file_prefix}velocity_profiles_{spec.key}.png", dpi=200)
+        fig.savefig(output_dir / f"{file_prefix}velocity_profiles_{spec.key}.pdf", bbox_inches="tight")
         plt.close(fig)
 
 
@@ -603,12 +600,12 @@ def save_tracking_animation(
     for spec in method_specs:
         xy_arrays.append(results[spec.key].poses[:, :2])
     set_equal_axis_with_min_span(ax, xy_arrays, min_span=1.0, margin_ratio=0.2)
-    ax.set_xlabel("X [m]")
-    ax.set_ylabel("Y [m]")
+    ax.set_xlabel("$x$ [m]")
+    ax.set_ylabel("$y$ [m]")
     ax.set_title("Path Tracking Animation")
     ax.grid(True)
 
-    ax.plot(path[:, 0], path[:, 1], "k--", linewidth=1.5, label="Reference Path")
+    ax.plot(path[:, 0], path[:, 1], "k--", linewidth=1.1, label="Reference Path")
     draw_path_heading_arrows(ax, path)
 
     span_x = float(np.max(path[:, 0]) - np.min(path[:, 0]))
@@ -620,25 +617,16 @@ def save_tracking_animation(
     pose_points = {}
     pose_arrows = {}
     for spec in method_specs:
-        trail_line, = ax.plot([], [], color=spec.color, linewidth=2.0, label=spec.label)
+        trail_line, = ax.plot([], [], color=spec.color, linewidth=1.1, label=spec.label)
         pose_point, = ax.plot([], [], marker="o", color=spec.color, markersize=5)
-        pose_arrow = FancyArrowPatch((0, 0), (0, 0), mutation_scale=14, color=spec.color)
+        pose_arrow = FancyArrowPatch((0, 0), (0, 0), mutation_scale=10, color=spec.color, linewidth=1.0)
         pose_arrow.set_visible(False)
         ax.add_patch(pose_arrow)
         trail_lines[spec.key] = trail_line
         pose_points[spec.key] = pose_point
         pose_arrows[spec.key] = pose_arrow
 
-    handles, labels = ax.get_legend_handles_labels()
-    ax.legend(
-        handles,
-        labels,
-        loc="lower center",
-        bbox_to_anchor=(0.5, 1.02),
-        ncol=max(2, min(5, len(labels))),
-        frameon=True,
-    )
-    fig.subplots_adjust(top=0.84)
+    plt.tight_layout()
 
     max_frames = max(len(results[spec.key].poses) for spec in method_specs)
 
@@ -697,10 +685,17 @@ def run_benchmark_for_path(
     output_root: Path,
     goal_tolerance_dist: float,
     goal_tolerance_heading: float,
-    max_sim_steps: int
+    max_sim_steps: int,
+    save_animation: bool,
 ) -> list[dict[str, str | float]]:
     path_dir = output_root / path_name
     path_dir.mkdir(parents=True, exist_ok=True)
+
+    figure_prefix = ""
+    if path_name == "path3_right_angle_90_last_heading_minus_pi":
+        figure_prefix = "exp1_"
+    elif path_name == "path4_one_minus_cos":
+        figure_prefix = "exp2_"
 
     np.save(path_dir / "path.npy", path)
 
@@ -733,30 +728,33 @@ def run_benchmark_for_path(
         row.update(metrics)
         rows.append(row)
 
-    write_metrics_tables(path_dir, rows)
+    write_metrics_tables(path_dir, rows, figure_prefix=figure_prefix)
     save_tracking_plots_by_method(
         path=path,
         method_specs=METHOD_SPECS,
         results=results,
         output_dir=path_dir,
+        file_prefix=figure_prefix,
     )
     save_tracking_plot_overlaid(
         path=path,
         method_specs=METHOD_SPECS,
         results=results,
-        output_path=path_dir / "tracking_poses.png",
+        output_path=path_dir / f"{figure_prefix}tracking_poses.png",
     )
     save_velocity_profiles_by_method(
         method_specs=METHOD_SPECS,
         results=results,
         output_dir=path_dir,
+        file_prefix=figure_prefix,
     )
-    save_tracking_animation(
-        path=path,
-        method_specs=METHOD_SPECS,
-        results=results,
-        output_dir=path_dir,
-    )
+    if save_animation:
+        save_tracking_animation(
+            path=path,
+            method_specs=METHOD_SPECS,
+            results=results,
+            output_dir=path_dir,
+        )
 
     return rows
 
@@ -805,6 +803,11 @@ def main() -> None:
     )
     parser.add_argument("--max-sim-steps", type=int, default=DEFAULT_MAX_SIM_STEPS)
     parser.add_argument("--output-root", type=Path, default=DEFAULT_RESULTS_ROOT)
+    parser.add_argument(
+        "--save-animation",
+        action="store_true",
+        help="Save tracking animation (MP4/GIF). Default: off",
+    )
     args = parser.parse_args()
 
     output_root = args.output_root
@@ -846,6 +849,7 @@ def main() -> None:
             goal_tolerance_dist=args.goal_tolerance,
             goal_tolerance_heading=goal_tolerance_heading,
             max_sim_steps=args.max_sim_steps,
+            save_animation=args.save_animation,
         )
         for row in rows:
             row_with_path = {"Path": path_name}
