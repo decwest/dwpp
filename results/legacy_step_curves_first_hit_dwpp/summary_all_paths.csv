@@ -1,0 +1,37 @@
+Path,Method,Constraint Violation Rate [%],Mean Position Error [m],Max Position Error [m],Mean Heading Error [deg],Travel Time [s]
+step_curve_theta45_l2,DWPP for Diff-drive,0.0000,0.0919,2.1987,72.0310,N/A
+step_curve_theta45_l2,VP for Omni (min L),100.0000,0.0070,0.0294,2.4323,27.3000
+step_curve_theta45_l2,VP for Omni (max L),100.0000,0.0165,0.0875,2.4869,27.2000
+step_curve_theta45_l2,DWVP for Omni,0.0000,0.0089,0.0454,3.1702,30.6500
+step_curve_theta45_l3,DWPP for Diff-drive,0.0000,0.3209,5.1557,74.8776,N/A
+step_curve_theta45_l3,VP for Omni (min L),100.0000,0.0076,0.0272,2.0994,31.8500
+step_curve_theta45_l3,VP for Omni (max L),100.0000,0.0154,0.0887,2.1064,31.7500
+step_curve_theta45_l3,DWVP for Omni,0.0000,0.0094,0.0453,2.7019,35.2500
+step_curve_theta45_l4,DWPP for Diff-drive,0.0000,0.0909,2.1151,69.1205,N/A
+step_curve_theta45_l4,VP for Omni (min L),100.0000,0.0088,0.0272,1.8276,36.4000
+step_curve_theta45_l4,VP for Omni (max L),100.0000,0.0157,0.0899,1.9472,36.3000
+step_curve_theta45_l4,DWVP for Omni,0.0000,0.0104,0.0466,2.5106,39.7500
+step_curve_theta90_l2,DWPP for Diff-drive,0.0000,0.0854,2.6560,70.2887,N/A
+step_curve_theta90_l2,VP for Omni (min L),100.0000,0.0080,0.0399,9.2815,27.0000
+step_curve_theta90_l2,VP for Omni (max L),100.0000,0.0206,0.1118,7.6893,25.2000
+step_curve_theta90_l2,DWVP for Omni,0.0000,0.0091,0.0385,5.6521,32.7000
+step_curve_theta90_l3,DWPP for Diff-drive,0.0000,0.0767,2.1328,69.0970,N/A
+step_curve_theta90_l3,VP for Omni (min L),100.0000,0.0086,0.0410,7.8488,31.6000
+step_curve_theta90_l3,VP for Omni (max L),100.0000,0.0184,0.1091,6.4802,29.7500
+step_curve_theta90_l3,DWVP for Omni,0.0000,0.0096,0.0392,5.0453,37.2500
+step_curve_theta90_l4,DWPP for Diff-drive,0.0000,0.1148,2.2114,74.3794,N/A
+step_curve_theta90_l4,VP for Omni (min L),100.0000,0.0092,0.0322,6.7503,36.1000
+step_curve_theta90_l4,VP for Omni (max L),100.0000,0.0188,0.1104,5.4877,34.4000
+step_curve_theta90_l4,DWVP for Omni,0.0000,0.0105,0.0393,4.5507,41.7500
+step_curve_theta135_l2,DWPP for Diff-drive,0.0000,0.3187,0.9036,48.9683,34.6500
+step_curve_theta135_l2,VP for Omni (min L),100.0000,0.0179,0.1139,19.5069,28.8500
+step_curve_theta135_l2,VP for Omni (max L),99.3902,0.0184,0.0864,19.4673,24.6000
+step_curve_theta135_l2,DWVP for Omni,0.0000,0.0077,0.0242,10.8636,34.7000
+step_curve_theta135_l3,DWPP for Diff-drive,0.0000,0.0195,1.3589,77.0635,N/A
+step_curve_theta135_l3,VP for Omni (min L),100.0000,0.0165,0.1045,16.9281,33.2500
+step_curve_theta135_l3,VP for Omni (max L),99.3139,0.0164,0.0762,16.5802,29.1500
+step_curve_theta135_l3,DWVP for Omni,0.0000,0.0084,0.0252,9.5100,39.1500
+step_curve_theta135_l4,DWPP for Diff-drive,0.0000,0.0566,2.0503,70.3194,N/A
+step_curve_theta135_l4,VP for Omni (min L),100.0000,0.0171,0.1138,14.6134,38.0000
+step_curve_theta135_l4,VP for Omni (max L),99.4065,0.0167,0.0912,13.8613,33.7000
+step_curve_theta135_l4,DWVP for Omni,0.0000,0.0095,0.0287,8.6557,43.6500

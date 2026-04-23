@@ -1,0 +1,4 @@
+| Method | Constraint Violation Rate [%] | Mean Position Error [m] | Max Position Error [m] | Mean Heading Error [deg] | Travel Time [s] |
+|---|---|---|---|---|---|
+| DWPP | 0.0000 | 0.0071 | 0.0191 | 7.5208 | 54.0000 |
+| DWPP with Auto Look-Ahead | 0.0000 | 0.0308 | 0.9139 | 19.4184 | N/A |

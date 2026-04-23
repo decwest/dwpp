@@ -1,0 +1,3 @@
+Path,Method,Constraint Violation Rate [%],Mean Position Error [m],Max Position Error [m],Mean Heading Error [deg],Travel Time [s]
+step_curve_theta90_l3,DWPP,0.0000,0.0073,0.0190,11.5349,55.3500
+step_curve_theta90_l3,DWPP with Auto Look-Ahead,0.0000,0.0439,0.3127,38.3775,186.7500

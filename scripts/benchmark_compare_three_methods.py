@@ -9,7 +9,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
-from matplotlib.patches import FancyArrowPatch
+from matplotlib.patches import FancyArrowPatch, Rectangle
 import matplotlib as mpl
 import numpy as np
 from scipy.spatial.distance import cdist
@@ -35,7 +35,12 @@ from path import (
     right_angle_polyline_curve_last_segment_heading_minus_pi,
     straight_line_heading_step_curve,
 )
-from pure_pursuit import pure_pursuit
+from pure_pursuit import (
+    DWPP_USE_REGULATED_VELOCITY,
+    calc_dynamic_window_bounds,
+    calc_regulated_translational_velocity,
+    pure_pursuit,
+)
 from robot import forward_simulation_differential, forward_simulation_omnidirectional
 
 
@@ -68,14 +73,15 @@ class SimulationResult:
     ref_velocities_raw: np.ndarray
     break_flags: np.ndarray
     times: np.ndarray
+    look_ahead_positions: np.ndarray | None = None
+    curvatures: np.ndarray | None = None
 
 
 METHOD_SPECS = [
-    MethodSpec("dwpp", "DWPP for Diff-drive", False, "tab:blue"),
-    MethodSpec("dwpp_omni_clip_min_l", "VP for Omni (min L)", True, "tab:green"),
-    MethodSpec("dwpp_omni_clip_max_l", "VP for Omni (max L)", True, "tab:orange"),
-    MethodSpec("dwpp_omni", "DWVP for Omni", True, "tab:red"),
+    MethodSpec("dwpp_fixed", "DWPP", False, "tab:blue"),
+    MethodSpec("dwpp", "DWPP with Auto Look-Ahead", False, "tab:red"),
 ]
+DIFF_DRIVE_DWPP_METHOD_KEYS = {"dwpp_fixed", "dwpp"}
 POST_GOAL_HEADING_KP_DIFF = 2.0
 
 
@@ -151,26 +157,39 @@ def simulate_single_method(
     ref_velocities_raw = [current_velocity.copy()]
     break_flags = [[False, False, False] if method_spec.is_omni else [False, False]]
     times = [0.0]
+    look_ahead_positions = []
+    curvatures = []
 
     for _ in range(max_sim_steps):
         if is_goal_reached(current_pose, goal_pose, goal_tolerance_dist, goal_tolerance_heading):
             break
 
         position_error_to_goal = float(np.linalg.norm(current_pose[:2] - goal_pose[:2]))
-        if (method_spec.key == "dwpp") and (position_error_to_goal <= goal_tolerance_dist):
+        if (method_spec.key in DIFF_DRIVE_DWPP_METHOD_KEYS) and (position_error_to_goal <= goal_tolerance_dist):
             next_velocity_ref = calc_goal_alignment_velocity_ref_diffdrive(
                 current_pose=current_pose,
                 current_velocity=current_velocity,
                 goal_pose=goal_pose,
             )
             break_flag = [False, False]
+            look_ahead_pos = goal_pose[:2].copy()
+            curvature = 0.0
         else:
-            next_velocity_ref, _, break_flag, _, _ = pure_pursuit(
+            next_velocity_ref, look_ahead_pos_raw, break_flag, curvature, _ = pure_pursuit(
                 current_pose,
                 current_velocity,
                 path,
                 method_spec.key
             )
+            look_ahead_pos = np.array(look_ahead_pos_raw[:2], dtype=float)
+
+        if not (
+            np.all(np.isfinite(next_velocity_ref))
+            and np.all(np.isfinite(look_ahead_pos))
+            and np.isfinite(curvature)
+        ):
+            print(f"[WARN] Non-finite command detected for method={method_spec.key}; stopping simulation early")
+            break
 
         if method_spec.is_omni:
             next_pose, next_velocity = forward_simulation_omnidirectional(
@@ -185,11 +204,17 @@ def simulate_single_method(
                 next_velocity_ref
             )
 
+        if not (np.all(np.isfinite(next_pose)) and np.all(np.isfinite(next_velocity))):
+            print(f"[WARN] Non-finite state detected for method={method_spec.key}; stopping simulation early")
+            break
+
         poses.append(next_pose)
         velocities_raw.append(next_velocity)
         ref_velocities_raw.append(next_velocity_ref)
         break_flags.append(break_flag)
         times.append(times[-1] + DT)
+        look_ahead_positions.append(np.array(look_ahead_pos, dtype=float))
+        curvatures.append(float(curvature))
 
         current_pose = next_pose
         current_velocity = next_velocity
@@ -202,6 +227,8 @@ def simulate_single_method(
         ref_velocities_raw=np.array(ref_velocities_raw, dtype=float),
         break_flags=np.array(break_flags, dtype=bool),
         times=np.array(times, dtype=float),
+        look_ahead_positions=np.array(look_ahead_positions, dtype=float),
+        curvatures=np.array(curvatures, dtype=float),
     )
 
 
@@ -246,6 +273,34 @@ def format_value(value: float, digits: int = 4) -> str:
     if np.isfinite(value):
         return f"{value:.{digits}f}"
     return "N/A"
+
+
+def filter_finite_xy_arrays(xy_arrays: list[np.ndarray]) -> list[np.ndarray]:
+    finite_arrays: list[np.ndarray] = []
+    for xy in xy_arrays:
+        arr = np.asarray(xy, dtype=float)
+        if arr.ndim != 2 or arr.shape[1] < 2 or len(arr) == 0:
+            continue
+        finite_mask = np.all(np.isfinite(arr[:, :2]), axis=1)
+        if np.any(finite_mask):
+            finite_arrays.append(arr[finite_mask, :2])
+    return finite_arrays
+
+
+def finite_min(values: np.ndarray, default: float) -> float:
+    finite_values = np.asarray(values, dtype=float)
+    finite_values = finite_values[np.isfinite(finite_values)]
+    if finite_values.size == 0:
+        return float(default)
+    return float(np.min(finite_values))
+
+
+def finite_max(values: np.ndarray, default: float) -> float:
+    finite_values = np.asarray(values, dtype=float)
+    finite_values = finite_values[np.isfinite(finite_values)]
+    if finite_values.size == 0:
+        return float(default)
+    return float(np.max(finite_values))
 
 
 def write_metrics_tables(path_dir: Path, rows: list[dict[str, str | float]], figure_prefix: str = "") -> None:
@@ -353,7 +408,15 @@ def set_equal_axis_with_min_span(
     min_span: float = 1.0,
     margin_ratio: float = 0.1
 ) -> None:
-    all_xy = np.vstack(xy_arrays)
+    finite_xy_arrays = filter_finite_xy_arrays(xy_arrays)
+    if len(finite_xy_arrays) == 0:
+        half_span = 0.5 * max(float(min_span), 1e-6) * (1.0 + float(margin_ratio))
+        ax.set_xlim(-half_span, half_span)
+        ax.set_ylim(-half_span, half_span)
+        ax.set_aspect("equal")
+        return
+
+    all_xy = np.vstack(finite_xy_arrays)
     x_min = float(np.min(all_xy[:, 0]))
     x_max = float(np.max(all_xy[:, 0]))
     y_min = float(np.min(all_xy[:, 1]))
@@ -377,7 +440,11 @@ def calc_tracking_layout(
     xy_arrays: list[np.ndarray],
     min_span_default: float = 1.0,
 ) -> tuple[tuple[float, float], float, float]:
-    all_xy = np.vstack(xy_arrays)
+    finite_xy_arrays = filter_finite_xy_arrays(xy_arrays)
+    if len(finite_xy_arrays) == 0:
+        return (3.0, 3.0), float(min_span_default), 0.12
+
+    all_xy = np.vstack(finite_xy_arrays)
     x_span_raw = float(np.max(all_xy[:, 0]) - np.min(all_xy[:, 0]))
     y_span_raw = float(np.max(all_xy[:, 1]) - np.min(all_xy[:, 1]))
 
@@ -399,6 +466,198 @@ def calc_tracking_layout(
         margin_ratio = 0.12
 
     return (fig_width, fig_height), min_span, margin_ratio
+
+
+def build_animation_frame_indices(
+    times: np.ndarray,
+    max_duration_s: float | None,
+    frame_stride: int,
+) -> np.ndarray:
+    if len(times) == 0:
+        return np.array([0], dtype=int)
+
+    stride = max(1, int(frame_stride))
+    max_frame_idx = len(times) - 1
+    if max_duration_s is not None:
+        capped_duration = max(0.0, float(max_duration_s))
+        max_frame_idx = int(np.searchsorted(times, capped_duration, side="right") - 1)
+        max_frame_idx = max(0, min(max_frame_idx, len(times) - 1))
+
+    frame_indices = np.arange(0, max_frame_idx + 1, stride, dtype=int)
+    if frame_indices[-1] != max_frame_idx:
+        frame_indices = np.append(frame_indices, max_frame_idx)
+    return frame_indices
+
+
+def calc_connecting_arc_points(
+    current_pose: np.ndarray,
+    look_ahead_pos: np.ndarray,
+    curvature: float,
+    num_points: int = 60,
+) -> np.ndarray:
+    start = np.array(current_pose[:2], dtype=float)
+    target = np.array(look_ahead_pos[:2], dtype=float)
+    if not np.all(np.isfinite(target)):
+        return np.empty((0, 2), dtype=float)
+
+    distance = float(np.linalg.norm(target - start))
+    if distance <= 1e-9:
+        return np.vstack([start, target])
+
+    if (not np.isfinite(curvature)) or abs(curvature) <= 1e-6:
+        return np.vstack([start, target])
+
+    radius = 1.0 / curvature
+    radius_abs = abs(radius)
+    theta = float(current_pose[2])
+    center = np.array([
+        start[0] - np.sin(theta) * radius,
+        start[1] + np.cos(theta) * radius,
+    ], dtype=float)
+
+    target_radius = float(np.linalg.norm(target - center))
+    if abs(target_radius - radius_abs) > max(1e-3, 0.05 * radius_abs):
+        return np.vstack([start, target])
+
+    start_angle = float(np.arctan2(start[1] - center[1], start[0] - center[0]))
+    target_angle = float(np.arctan2(target[1] - center[1], target[0] - center[0]))
+
+    if curvature > 0.0:
+        while target_angle < start_angle:
+            target_angle += 2.0 * np.pi
+    else:
+        while target_angle > start_angle:
+            target_angle -= 2.0 * np.pi
+
+    angles = np.linspace(start_angle, target_angle, max(2, int(num_points)))
+    arc_points = np.column_stack([
+        center[0] + radius_abs * np.cos(angles),
+        center[1] + radius_abs * np.sin(angles),
+    ])
+    arc_points[0] = start
+    arc_points[-1] = target
+    return arc_points
+
+
+def calc_vw_line_segment_in_bounds(
+    curvature: float,
+    v_min: float,
+    v_max: float,
+    w_min: float,
+    w_max: float,
+) -> np.ndarray:
+    if not np.isfinite(curvature):
+        return np.empty((0, 2), dtype=float)
+
+    if abs(curvature) <= 1e-12:
+        if w_min <= 0.0 <= w_max:
+            return np.array([[v_min, 0.0], [v_max, 0.0]], dtype=float)
+        return np.empty((0, 2), dtype=float)
+
+    candidates: list[tuple[float, float]] = []
+    eps = 1e-12
+
+    for v in (v_min, v_max):
+        w = curvature * v
+        if w_min - eps <= w <= w_max + eps:
+            candidates.append((float(v), float(w)))
+
+    for w in (w_min, w_max):
+        v = w / curvature
+        if v_min - eps <= v <= v_max + eps:
+            candidates.append((float(v), float(w)))
+
+    if len(candidates) == 0:
+        return np.empty((0, 2), dtype=float)
+
+    unique_candidates: list[tuple[float, float]] = []
+    for point in candidates:
+        if any(abs(point[0] - other[0]) <= 1e-9 and abs(point[1] - other[1]) <= 1e-9 for other in unique_candidates):
+            continue
+        unique_candidates.append(point)
+
+    unique_candidates.sort(key=lambda point: (point[0], point[1]))
+    if len(unique_candidates) == 1:
+        return np.array([unique_candidates[0], unique_candidates[0]], dtype=float)
+
+    return np.array([unique_candidates[0], unique_candidates[-1]], dtype=float)
+
+
+def calc_constant_curvature_preview_arc(
+    current_pose: np.ndarray,
+    curvature: float,
+    travel_distance: float,
+    num_points: int = 60,
+) -> np.ndarray:
+    if (not np.isfinite(travel_distance)) or travel_distance <= 1e-9:
+        return np.empty((0, 2), dtype=float)
+
+    start = np.array(current_pose[:2], dtype=float)
+    theta0 = float(current_pose[2])
+    s = np.linspace(0.0, float(travel_distance), max(2, int(num_points)))
+
+    if (not np.isfinite(curvature)) or abs(curvature) <= 1e-9:
+        x = start[0] + s * np.cos(theta0)
+        y = start[1] + s * np.sin(theta0)
+        return np.column_stack([x, y])
+
+    x = start[0] + (np.sin(theta0 + curvature * s) - np.sin(theta0)) / curvature
+    y = start[1] + (-np.cos(theta0 + curvature * s) + np.cos(theta0)) / curvature
+    return np.column_stack([x, y])
+
+
+def calc_dynamic_window_curvature_range(
+    dw_vmin: float,
+    dw_vmax: float,
+    dw_wmin: float,
+    dw_wmax: float,
+    v_eps: float = 1e-9,
+) -> tuple[float, float]:
+    if dw_vmax <= v_eps:
+        return float("nan"), float("nan")
+
+    if dw_wmin < -v_eps:
+        kappa_min = float(dw_wmin / dw_vmin) if dw_vmin > v_eps else float("-inf")
+    elif dw_wmin > v_eps:
+        kappa_min = float(dw_wmin / dw_vmax)
+    else:
+        kappa_min = 0.0
+
+    if dw_wmax > v_eps:
+        kappa_max = float(dw_wmax / dw_vmin) if dw_vmin > v_eps else float("inf")
+    elif dw_wmax < -v_eps:
+        kappa_max = float(dw_wmax / dw_vmax)
+    else:
+        kappa_max = 0.0
+
+    return kappa_min, kappa_max
+
+
+def calc_visualized_curvature_for_preview(curvature: float, preview_distance: float) -> float:
+    if np.isnan(curvature):
+        return float("nan")
+
+    min_radius = max(0.08, 0.18 * max(float(preview_distance), 1e-6))
+    max_abs_curvature = 1.0 / min_radius
+
+    if np.isposinf(curvature):
+        return float(max_abs_curvature)
+    if np.isneginf(curvature):
+        return float(-max_abs_curvature)
+    if not np.isfinite(curvature):
+        return float("nan")
+
+    return float(np.clip(curvature, -max_abs_curvature, max_abs_curvature))
+
+
+def format_curvature_value(curvature: float) -> str:
+    if np.isposinf(curvature):
+        return "+inf"
+    if np.isneginf(curvature):
+        return "-inf"
+    if not np.isfinite(curvature):
+        return "N/A"
+    return f"{float(curvature):.3f}"
 
 
 def save_tracking_plots_by_method(
@@ -538,12 +797,12 @@ def save_velocity_profiles_by_method(
     for spec in method_specs:
         _, v_real, v_ref = converted_cache[spec.key]
         values_min_v.extend([
-            float(np.min(v_real[:, 0])), float(np.min(v_ref[:, 0])),
-            float(np.min(v_real[:, 1])), float(np.min(v_ref[:, 1])),
+            finite_min(v_real[:, 0], VX_MIN), finite_min(v_ref[:, 0], VX_MIN),
+            finite_min(v_real[:, 1], VY_MIN), finite_min(v_ref[:, 1], VY_MIN),
         ])
         values_max_v.extend([
-            float(np.max(v_real[:, 0])), float(np.max(v_ref[:, 0])),
-            float(np.max(v_real[:, 1])), float(np.max(v_ref[:, 1])),
+            finite_max(v_real[:, 0], VX_MAX), finite_max(v_ref[:, 0], VX_MAX),
+            finite_max(v_real[:, 1], VY_MAX), finite_max(v_ref[:, 1], VY_MAX),
         ])
     y_min_v = min(values_min_v)
     y_max_v = max(values_max_v)
@@ -592,7 +851,9 @@ def save_tracking_animation(
     path: np.ndarray,
     method_specs: list[MethodSpec],
     results: dict[str, SimulationResult],
-    output_dir: Path
+    output_dir: Path,
+    max_duration_s: float | None = None,
+    frame_stride: int = 1,
 ) -> None:
     fig, ax = plt.subplots(figsize=(7.5, 7.5))
 
@@ -628,7 +889,11 @@ def save_tracking_animation(
 
     plt.tight_layout()
 
-    max_frames = max(len(results[spec.key].poses) for spec in method_specs)
+    frame_indices_by_method = {
+        spec.key: build_animation_frame_indices(results[spec.key].times, max_duration_s, frame_stride)
+        for spec in method_specs
+    }
+    max_frames = max(len(frame_indices_by_method[spec.key]) for spec in method_specs)
 
     def init():
         artists = []
@@ -643,7 +908,8 @@ def save_tracking_animation(
         artists = []
         for spec in method_specs:
             poses = results[spec.key].poses
-            idx = min(frame_idx, len(poses) - 1)
+            frame_indices = frame_indices_by_method[spec.key]
+            idx = int(frame_indices[min(frame_idx, len(frame_indices) - 1)])
             trail_lines[spec.key].set_data(poses[:idx + 1, 0], poses[:idx + 1, 1])
             pose_points[spec.key].set_data([poses[idx, 0]], [poses[idx, 1]])
 
@@ -663,18 +929,384 @@ def save_tracking_animation(
         update,
         frames=max_frames,
         init_func=init,
-        interval=max(1, int(round(1000.0 * DT))),
+        interval=max(1, int(round(1000.0 * DT * max(1, frame_stride)))),
         blit=False,
         repeat=False,
     )
 
-    fps = max(1, int(round(1.0 / DT)))
+    fps = max(1, int(round(1.0 / (DT * max(1, frame_stride)))))
     mp4_path = output_dir / "tracking_comparison.mp4"
     try:
         ani.save(mp4_path, writer="ffmpeg", fps=fps)
     except Exception:
         gif_path = output_dir / "tracking_comparison.gif"
         ani.save(gif_path, writer="pillow", fps=fps)
+
+    plt.close(fig)
+
+
+def save_method_debug_animation(
+    path: np.ndarray,
+    method_spec: MethodSpec,
+    result: SimulationResult,
+    output_dir: Path,
+    max_duration_s: float | None = None,
+    frame_stride: int = 1,
+) -> None:
+    fig = plt.figure(figsize=(15.0, 8.0))
+    grid = fig.add_gridspec(2, 2, width_ratios=[1.25, 1.0], height_ratios=[1.0, 1.0])
+    ax_global = fig.add_subplot(grid[0, 0])
+    ax_local = fig.add_subplot(grid[1, 0])
+    ax_vw = fig.add_subplot(grid[:, 1])
+
+    xy_arrays = [path[:, :2], result.poses[:, :2]]
+    if result.look_ahead_positions is not None and len(result.look_ahead_positions) > 0:
+        finite_mask = np.all(np.isfinite(result.look_ahead_positions), axis=1)
+        if np.any(finite_mask):
+            xy_arrays.append(result.look_ahead_positions[finite_mask])
+
+    set_equal_axis_with_min_span(ax_global, xy_arrays, min_span=1.0, margin_ratio=0.2)
+    ax_global.set_xlabel("$x$ [m]")
+    ax_global.set_ylabel("$y$ [m]")
+    ax_global.set_title(f"{method_spec.label} Debug Animation")
+    ax_global.grid(True)
+    ax_global.plot(path[:, 0], path[:, 1], "k--", linewidth=1.1, label="Reference Path")
+    draw_path_heading_arrows(ax_global, path)
+
+    ax_local.set_xlabel("$x$ [m]")
+    ax_local.set_ylabel("$y$ [m]")
+    ax_local.set_title("Local Zoom")
+    ax_local.grid(True)
+    ax_local.plot(path[:, 0], path[:, 1], "k--", linewidth=1.1, label="Reference Path")
+
+    v_margin = 0.06 * max(V_MAX - V_MIN, 1e-6)
+    w_margin = 0.06 * max(W_MAX - W_MIN, 1e-6)
+    vw_vmin_axis = V_MIN - v_margin
+    vw_vmax_axis = V_MAX + v_margin
+    vw_wmin_axis = W_MIN - w_margin
+    vw_wmax_axis = W_MAX + w_margin
+
+    ax_vw.set_xlim(vw_vmin_axis, vw_vmax_axis)
+    ax_vw.set_ylim(vw_wmin_axis, vw_wmax_axis)
+    ax_vw.set_xlabel("$v$ [m/s]")
+    ax_vw.set_ylabel("$\\omega$ [rad/s]")
+    ax_vw.set_title("$v\\omega$ Plane")
+    ax_vw.grid(True)
+    ax_vw.axhline(0.0, color="0.7", linewidth=0.9)
+    ax_vw.axvline(0.0, color="0.7", linewidth=0.9)
+
+    span_x = float(np.max(path[:, 0]) - np.min(path[:, 0]))
+    span_y = float(np.max(path[:, 1]) - np.min(path[:, 1]))
+    diag = float(np.hypot(span_x, span_y))
+    arrow_length = max(0.05, 0.05 * diag)
+    zoom_radius = max(0.4, 0.12 * diag)
+    dw_kappa_preview_distance = max(0.25, 0.80 * zoom_radius)
+
+    def create_debug_artists(ax: plt.Axes, show_labels: bool) -> dict[str, object]:
+        trail_line, = ax.plot(
+            [],
+            [],
+            color=method_spec.color,
+            linewidth=1.4,
+            label=method_spec.label if show_labels else None,
+            zorder=2,
+        )
+        pose_point, = ax.plot(
+            [],
+            [],
+            marker="o",
+            color=method_spec.color,
+            markersize=7,
+            label="Robot" if show_labels else None,
+            zorder=5,
+        )
+        look_ahead_point, = ax.plot(
+            [],
+            [],
+            marker="o",
+            color="crimson",
+            markeredgecolor="white",
+            markeredgewidth=0.8,
+            markersize=9,
+            label="Look Ahead" if show_labels else None,
+            zorder=7,
+        )
+        chord_line, = ax.plot(
+            [],
+            [],
+            color="orange",
+            linewidth=1.4,
+            linestyle="--",
+            alpha=0.9,
+            label="Look-Ahead Chord" if show_labels else None,
+            zorder=4,
+        )
+        arc_line, = ax.plot(
+            [],
+            [],
+            color="magenta",
+            linewidth=2.0,
+            alpha=0.9,
+            label="Connecting Arc" if show_labels else None,
+            zorder=6,
+        )
+        min_kappa_arc_line, = ax.plot(
+            [],
+            [],
+            color="tab:green",
+            linewidth=1.6,
+            linestyle=":",
+            alpha=0.95,
+            label="DW $\\kappa_{min}$ Arc" if show_labels else None,
+            zorder=3,
+        )
+        max_kappa_arc_line, = ax.plot(
+            [],
+            [],
+            color="tab:cyan",
+            linewidth=1.6,
+            linestyle=":",
+            alpha=0.95,
+            label="DW $\\kappa_{max}$ Arc" if show_labels else None,
+            zorder=3,
+        )
+        pose_arrow = FancyArrowPatch((0, 0), (0, 0), mutation_scale=12, color=method_spec.color, linewidth=1.2)
+        pose_arrow.set_visible(False)
+        ax.add_patch(pose_arrow)
+        return {
+            "trail_line": trail_line,
+            "pose_point": pose_point,
+            "look_ahead_point": look_ahead_point,
+            "chord_line": chord_line,
+            "arc_line": arc_line,
+            "min_kappa_arc_line": min_kappa_arc_line,
+            "max_kappa_arc_line": max_kappa_arc_line,
+            "pose_arrow": pose_arrow,
+        }
+
+    global_artists = create_debug_artists(ax_global, show_labels=True)
+    local_artists = create_debug_artists(ax_local, show_labels=False)
+    dw_patch = Rectangle(
+        (0.0, 0.0),
+        0.0,
+        0.0,
+        fill=False,
+        edgecolor="black",
+        linewidth=1.5,
+        linestyle="--",
+        label="Dynamic Window",
+    )
+    dw_patch.set_visible(False)
+    ax_vw.add_patch(dw_patch)
+    vw_line, = ax_vw.plot(
+        [],
+        [],
+        color="magenta",
+        linewidth=2.0,
+        label="$\\omega = \\kappa v$",
+    )
+    current_velocity_point, = ax_vw.plot(
+        [],
+        [],
+        marker="o",
+        color=method_spec.color,
+        markersize=7,
+        label="Current Velocity",
+    )
+    selected_velocity_point, = ax_vw.plot(
+        [],
+        [],
+        marker="x",
+        color="crimson",
+        markersize=9,
+        markeredgewidth=2.0,
+        linestyle="None",
+        label="Selected Command",
+    )
+
+    time_text = ax_global.text(0.02, 0.98, "", transform=ax_global.transAxes, ha="left", va="top")
+    kappa_text = ax_local.text(0.02, 0.98, "", transform=ax_local.transAxes, ha="left", va="top")
+    vw_text = ax_vw.text(0.02, 0.98, "", transform=ax_vw.transAxes, ha="left", va="top")
+    ax_global.legend(loc="upper right")
+    ax_vw.legend(loc="upper right")
+    fig.tight_layout()
+
+    frame_indices = build_animation_frame_indices(result.times, max_duration_s, frame_stride)
+    look_ahead_positions = result.look_ahead_positions if result.look_ahead_positions is not None else np.empty((0, 2))
+    curvatures = result.curvatures if result.curvatures is not None else np.empty((0,), dtype=float)
+
+    def init():
+        for artist_group in (global_artists, local_artists):
+            artist_group["trail_line"].set_data([], [])
+            artist_group["pose_point"].set_data([], [])
+            artist_group["look_ahead_point"].set_data([], [])
+            artist_group["chord_line"].set_data([], [])
+            artist_group["arc_line"].set_data([], [])
+            artist_group["min_kappa_arc_line"].set_data([], [])
+            artist_group["max_kappa_arc_line"].set_data([], [])
+            artist_group["pose_arrow"].set_visible(False)
+        dw_patch.set_visible(False)
+        vw_line.set_data([], [])
+        current_velocity_point.set_data([], [])
+        selected_velocity_point.set_data([], [])
+        time_text.set_text("")
+        kappa_text.set_text("")
+        vw_text.set_text("")
+        return [
+            global_artists["trail_line"], global_artists["pose_point"], global_artists["look_ahead_point"],
+            global_artists["chord_line"], global_artists["arc_line"],
+            global_artists["min_kappa_arc_line"], global_artists["max_kappa_arc_line"], global_artists["pose_arrow"],
+            local_artists["trail_line"], local_artists["pose_point"], local_artists["look_ahead_point"],
+            local_artists["chord_line"], local_artists["arc_line"],
+            local_artists["min_kappa_arc_line"], local_artists["max_kappa_arc_line"], local_artists["pose_arrow"],
+            dw_patch, vw_line, current_velocity_point, selected_velocity_point,
+            time_text, kappa_text, vw_text,
+        ]
+
+    def update(frame_number: int):
+        idx = int(frame_indices[frame_number])
+        current_pose = result.poses[idx]
+
+        dx = arrow_length * np.cos(current_pose[2])
+        dy = arrow_length * np.sin(current_pose[2])
+
+        for artist_group in (global_artists, local_artists):
+            artist_group["trail_line"].set_data(result.poses[:idx + 1, 0], result.poses[:idx + 1, 1])
+            artist_group["pose_point"].set_data([current_pose[0]], [current_pose[1]])
+            artist_group["pose_arrow"].set_positions(
+                (current_pose[0], current_pose[1]),
+                (current_pose[0] + dx, current_pose[1] + dy),
+            )
+            artist_group["pose_arrow"].set_visible(True)
+
+        ax_local.set_xlim(current_pose[0] - zoom_radius, current_pose[0] + zoom_radius)
+        ax_local.set_ylim(current_pose[1] - zoom_radius, current_pose[1] + zoom_radius)
+        ax_local.set_aspect("equal")
+
+        if idx < len(look_ahead_positions) and np.all(np.isfinite(look_ahead_positions[idx])):
+            look_ahead_pos = look_ahead_positions[idx]
+            curvature = float(curvatures[idx]) if idx < len(curvatures) else float("nan")
+            arc_points = calc_connecting_arc_points(current_pose, look_ahead_pos, curvature)
+            for artist_group in (global_artists, local_artists):
+                artist_group["look_ahead_point"].set_data([look_ahead_pos[0]], [look_ahead_pos[1]])
+                artist_group["chord_line"].set_data(
+                    [current_pose[0], look_ahead_pos[0]],
+                    [current_pose[1], look_ahead_pos[1]],
+                )
+                if len(arc_points) > 0:
+                    artist_group["arc_line"].set_data(arc_points[:, 0], arc_points[:, 1])
+                else:
+                    artist_group["arc_line"].set_data([], [])
+            kappa_text.set_text(f"$\\kappa$ = {curvature:.3f}")
+        else:
+            curvature = float("nan")
+            for artist_group in (global_artists, local_artists):
+                artist_group["look_ahead_point"].set_data([], [])
+                artist_group["chord_line"].set_data([], [])
+                artist_group["arc_line"].set_data([], [])
+            kappa_text.set_text("$\\kappa$ = N/A")
+
+        if idx < len(curvatures) and (idx + 1) < len(result.ref_velocities_raw):
+            current_velocity = np.asarray(result.velocities_raw[idx], dtype=float)
+            selected_velocity = np.asarray(result.ref_velocities_raw[idx + 1], dtype=float)
+            dw_vmin, dw_vmax, dw_wmin, dw_wmax = calc_dynamic_window_bounds(current_velocity)
+            if DWPP_USE_REGULATED_VELOCITY and np.isfinite(curvature):
+                regulated_v = calc_regulated_translational_velocity(curvature)
+            else:
+                regulated_v = V_MAX
+            dw_vmax = min(dw_vmax, max(dw_vmin, regulated_v))
+
+            dw_patch.set_xy((dw_vmin, dw_wmin))
+            dw_patch.set_width(max(dw_vmax - dw_vmin, 0.0))
+            dw_patch.set_height(max(dw_wmax - dw_wmin, 0.0))
+            dw_patch.set_visible(True)
+
+            dw_kappa_min, dw_kappa_max = calc_dynamic_window_curvature_range(
+                dw_vmin=dw_vmin,
+                dw_vmax=dw_vmax,
+                dw_wmin=dw_wmin,
+                dw_wmax=dw_wmax,
+            )
+            min_dw_arc_points = calc_constant_curvature_preview_arc(
+                current_pose=current_pose,
+                curvature=calc_visualized_curvature_for_preview(dw_kappa_min, dw_kappa_preview_distance),
+                travel_distance=dw_kappa_preview_distance,
+            )
+            max_dw_arc_points = calc_constant_curvature_preview_arc(
+                current_pose=current_pose,
+                curvature=calc_visualized_curvature_for_preview(dw_kappa_max, dw_kappa_preview_distance),
+                travel_distance=dw_kappa_preview_distance,
+            )
+            for artist_group in (global_artists, local_artists):
+                if len(min_dw_arc_points) > 0:
+                    artist_group["min_kappa_arc_line"].set_data(min_dw_arc_points[:, 0], min_dw_arc_points[:, 1])
+                else:
+                    artist_group["min_kappa_arc_line"].set_data([], [])
+                if len(max_dw_arc_points) > 0:
+                    artist_group["max_kappa_arc_line"].set_data(max_dw_arc_points[:, 0], max_dw_arc_points[:, 1])
+                else:
+                    artist_group["max_kappa_arc_line"].set_data([], [])
+
+            vw_segment = calc_vw_line_segment_in_bounds(
+                curvature=curvature,
+                v_min=vw_vmin_axis,
+                v_max=vw_vmax_axis,
+                w_min=vw_wmin_axis,
+                w_max=vw_wmax_axis,
+            )
+            if len(vw_segment) > 0:
+                vw_line.set_data(vw_segment[:, 0], vw_segment[:, 1])
+            else:
+                vw_line.set_data([], [])
+
+            current_velocity_point.set_data([current_velocity[0]], [current_velocity[1]])
+            selected_velocity_point.set_data([selected_velocity[0]], [selected_velocity[1]])
+            vw_text.set_text(
+                "\n".join([
+                    f"DW: v=[{dw_vmin:.3f}, {dw_vmax:.3f}]",
+                    f"    $\\omega$=[{dw_wmin:.3f}, {dw_wmax:.3f}]",
+                    f"$\\kappa_{{DW}}$=[{format_curvature_value(dw_kappa_min)}, {format_curvature_value(dw_kappa_max)}]",
+                    f"cmd=({selected_velocity[0]:.3f}, {selected_velocity[1]:.3f})",
+                ])
+            )
+        else:
+            dw_patch.set_visible(False)
+            vw_line.set_data([], [])
+            current_velocity_point.set_data([], [])
+            selected_velocity_point.set_data([], [])
+            for artist_group in (global_artists, local_artists):
+                artist_group["min_kappa_arc_line"].set_data([], [])
+                artist_group["max_kappa_arc_line"].set_data([], [])
+            vw_text.set_text("")
+
+        time_text.set_text(f"t = {result.times[idx]:.2f} s")
+        return [
+            global_artists["trail_line"], global_artists["pose_point"], global_artists["look_ahead_point"],
+            global_artists["chord_line"], global_artists["arc_line"],
+            global_artists["min_kappa_arc_line"], global_artists["max_kappa_arc_line"], global_artists["pose_arrow"],
+            local_artists["trail_line"], local_artists["pose_point"], local_artists["look_ahead_point"],
+            local_artists["chord_line"], local_artists["arc_line"],
+            local_artists["min_kappa_arc_line"], local_artists["max_kappa_arc_line"], local_artists["pose_arrow"],
+            dw_patch, vw_line, current_velocity_point, selected_velocity_point,
+            time_text, kappa_text, vw_text,
+        ]
+
+    ani = FuncAnimation(
+        fig,
+        update,
+        frames=len(frame_indices),
+        init_func=init,
+        interval=max(1, int(round(1000.0 * DT * max(1, frame_stride)))),
+        blit=False,
+        repeat=False,
+    )
+
+    fps = max(1, int(round(1.0 / (DT * max(1, frame_stride)))))
+    output_path = output_dir / f"tracking_debug_{method_spec.key}.mp4"
+    try:
+        ani.save(output_path, writer="ffmpeg", fps=fps)
+    except Exception:
+        ani.save(output_path.with_suffix(".gif"), writer="pillow", fps=fps)
 
     plt.close(fig)
 
@@ -687,6 +1319,9 @@ def run_benchmark_for_path(
     goal_tolerance_heading: float,
     max_sim_steps: int,
     save_animation: bool,
+    save_dwpp_debug_animation: bool = False,
+    animation_max_seconds: float | None = None,
+    animation_frame_stride: int = 1,
 ) -> list[dict[str, str | float]]:
     path_dir = output_root / path_name
     path_dir.mkdir(parents=True, exist_ok=True)
@@ -717,6 +1352,10 @@ def run_benchmark_for_path(
         np.save(path_dir / f"{spec.key}_ref_velocities.npy", result.ref_velocities_raw)
         np.save(path_dir / f"{spec.key}_break_flags.npy", result.break_flags)
         np.save(path_dir / f"{spec.key}_times.npy", result.times)
+        if result.look_ahead_positions is not None:
+            np.save(path_dir / f"{spec.key}_look_ahead_positions.npy", result.look_ahead_positions)
+        if result.curvatures is not None:
+            np.save(path_dir / f"{spec.key}_curvatures.npy", result.curvatures)
 
         metrics = calc_metrics(
             path,
@@ -754,7 +1393,21 @@ def run_benchmark_for_path(
             method_specs=METHOD_SPECS,
             results=results,
             output_dir=path_dir,
+            max_duration_s=animation_max_seconds,
+            frame_stride=animation_frame_stride,
         )
+    if save_dwpp_debug_animation:
+        for spec in METHOD_SPECS:
+            if spec.key != "dwpp":
+                continue
+            save_method_debug_animation(
+                path=path,
+                method_spec=spec,
+                result=results[spec.key],
+                output_dir=path_dir,
+                max_duration_s=animation_max_seconds,
+                frame_stride=animation_frame_stride,
+            )
 
     return rows
 
@@ -804,9 +1457,32 @@ def main() -> None:
     parser.add_argument("--max-sim-steps", type=int, default=DEFAULT_MAX_SIM_STEPS)
     parser.add_argument("--output-root", type=Path, default=DEFAULT_RESULTS_ROOT)
     parser.add_argument(
+        "--path-names",
+        nargs="*",
+        default=None,
+        help="Optional subset of path names to run, e.g. path1_right_angle_90",
+    )
+    parser.add_argument(
         "--save-animation",
         action="store_true",
         help="Save tracking animation (MP4/GIF). Default: off",
+    )
+    parser.add_argument(
+        "--save-dwpp-debug-animation",
+        action="store_true",
+        help="Save a DWPP debug animation with look-ahead point and connecting arc.",
+    )
+    parser.add_argument(
+        "--animation-max-seconds",
+        type=float,
+        default=None,
+        help="Optional upper bound on animation duration in seconds.",
+    )
+    parser.add_argument(
+        "--animation-frame-stride",
+        type=int,
+        default=1,
+        help="Subsample animation frames by this stride.",
     )
     args = parser.parse_args()
 
@@ -840,6 +1516,12 @@ def main() -> None:
         ),
     }
 
+    if args.path_names:
+        missing_path_names = [path_name for path_name in args.path_names if path_name not in paths]
+        if missing_path_names:
+            raise ValueError(f"Unknown path names: {missing_path_names}. Available: {list(paths.keys())}")
+        paths = {path_name: paths[path_name] for path_name in args.path_names}
+
     overall_rows: list[dict[str, str | float]] = []
     for path_name, path in paths.items():
         rows = run_benchmark_for_path(
@@ -850,6 +1532,9 @@ def main() -> None:
             goal_tolerance_heading=goal_tolerance_heading,
             max_sim_steps=args.max_sim_steps,
             save_animation=args.save_animation,
+            save_dwpp_debug_animation=args.save_dwpp_debug_animation,
+            animation_max_seconds=args.animation_max_seconds,
+            animation_frame_stride=args.animation_frame_stride,
         )
         for row in rows:
             row_with_path = {"Path": path_name}

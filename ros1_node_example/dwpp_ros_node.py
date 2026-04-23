@@ -263,41 +263,53 @@ class PurePursuitController:
         
         # Calculate path distances
         path_distances = self.calc_path_distances(path)
-        
-        # Calculate look ahead distance
-        look_ahead_distance = self.calc_look_ahead_distance(current_velocity, method_name)
-        
-        # Calculate curvature to look ahead position
-        curvature, look_ahead_pos = self.calc_curvature_to_look_ahead_position(
-            current_pose, current_idx, path, path_distances, look_ahead_distance
-        )
-        
-        if method_name in ["rpp", "dwpp"]:
-            # Calculate regulated translational velocity (Regulated Pure Pursuit)
-            regulated_v = self.calc_regulated_translational_velocity(curvature)
-        else:
-            regulated_v = self.V_MAX
-        
-        if method_name in ["pp", "app", "rpp"]:
-            # Calculate translational velocity
-            v_ref = self.calc_reference_translational_velocity(current_pose, path[-1])
-            
-            # Regulate translational velocity for RPP
-            if method_name == "rpp":
-                v_ref = min(v_ref, regulated_v)
-            
-            # Calculate angular velocity
-            w_ref = curvature * v_ref
-            next_velocity_ref = np.array([v_ref, w_ref])
-            
-        else:  # dwpp
-            # Decide acceleration or deceleration
+
+        if method_name == "dwpp":
             is_accel = self.decide_accel_or_decel(current_idx, path_distances)
-            
-            # Calculate optimal velocity considering dynamic window
-            next_velocity_ref = self.calc_optimal_velocity_considering_dynamic_window(
-                current_velocity, regulated_v, curvature, is_accel
+            next_velocity_ref, look_ahead_pos, curvature, regulated_v = self.calc_dwpp_velocity_with_auto_look_ahead(
+                current_pose=current_pose,
+                current_velocity=current_velocity,
+                current_idx=current_idx,
+                path=path,
+                path_distances=path_distances,
+                is_accel=is_accel,
+                use_regulated_velocity=True,
             )
+        else:
+            # Calculate look ahead distance
+            look_ahead_distance = self.calc_look_ahead_distance(current_velocity, method_name)
+
+            # Calculate curvature to look ahead position
+            curvature, look_ahead_pos = self.calc_curvature_to_look_ahead_position(
+                current_pose, current_idx, path, path_distances, look_ahead_distance
+            )
+
+            if method_name in ["rpp", "dwpp"]:
+                # Calculate regulated translational velocity (Regulated Pure Pursuit)
+                regulated_v = self.calc_regulated_translational_velocity(curvature)
+            else:
+                regulated_v = self.V_MAX
+
+            if method_name in ["pp", "app", "rpp"]:
+                # Calculate translational velocity
+                v_ref = self.calc_reference_translational_velocity(current_pose, path[-1])
+                
+                # Regulate translational velocity for RPP
+                if method_name == "rpp":
+                    v_ref = min(v_ref, regulated_v)
+                
+                # Calculate angular velocity
+                w_ref = curvature * v_ref
+                next_velocity_ref = np.array([v_ref, w_ref])
+                
+            else:
+                # Decide acceleration or deceleration
+                is_accel = self.decide_accel_or_decel(current_idx, path_distances)
+                
+                # Calculate optimal velocity considering dynamic window
+                next_velocity_ref = self.calc_optimal_velocity_considering_dynamic_window(
+                    current_velocity, regulated_v, curvature, is_accel
+                )
         
         # Check constraints breaking
         break_constraints_flag = self._check_constraints_breaking(current_velocity, next_velocity_ref)
@@ -315,17 +327,25 @@ class PurePursuitController:
         distances = np.linalg.norm(differences, axis=1)
         return np.concatenate(([0.0], np.cumsum(distances)))
 
+    def calc_min_look_ahead_distance_from_velocity(self, current_velocity: np.ndarray) -> float:
+        return abs(float(current_velocity[0])) * self.dt
+
     def calc_look_ahead_distance(self, current_velocity: np.ndarray, method_name: str) -> float:
         """Calculate look ahead distance based on method"""
+        min_look_ahead_distance = self.calc_min_look_ahead_distance_from_velocity(current_velocity)
+        max_look_ahead_distance = max(self.MAX_LOOK_AHEAD_DISTANCE, min_look_ahead_distance)
+
         if method_name in ["app", "rpp", "dwpp"]:
             # Adaptive look ahead distance
-            look_ahead_distance = self.LOOK_AHEAD_TIME * current_velocity[0]
-            return np.clip(look_ahead_distance, 
-                          self.MIN_LOOK_AHEAD_DISTANCE, 
-                          self.MAX_LOOK_AHEAD_DISTANCE)
+            look_ahead_distance = self.LOOK_AHEAD_TIME * abs(float(current_velocity[0]))
+            return float(np.clip(
+                look_ahead_distance,
+                min_look_ahead_distance,
+                max_look_ahead_distance,
+            ))
         else:  # pp
             # Fixed look ahead distance
-            return self.MIN_LOOK_AHEAD_DISTANCE
+            return max(self.MIN_LOOK_AHEAD_DISTANCE, min_look_ahead_distance)
 
     def calc_curvature_to_look_ahead_position(self, current_pose: np.ndarray, 
                                             current_idx: int, path: np.ndarray, 
@@ -338,18 +358,15 @@ class PurePursuitController:
         look_ahead_idx = min(np.searchsorted(path_distances, look_ahead_pos_distance), 
                             len(path) - 1)
         look_ahead_pos = path[look_ahead_idx]
-        
-        # Calculate curvature
-        look_ahead_angle = (math.atan2(look_ahead_pos[1] - current_pose[1], 
-                                     look_ahead_pos[0] - current_pose[0]) - current_pose[2])
-        L = np.linalg.norm(look_ahead_pos - current_pose[:2])
-        
-        if L == 0:
-            curvature = 0.0
-        else:
-            curvature = 2.0 * math.sin(look_ahead_angle) / L
-        
-        return curvature, look_ahead_pos
+        return self.calc_curvature_to_point(current_pose, look_ahead_pos), look_ahead_pos
+
+    def calc_curvature_to_point(self, current_pose: np.ndarray, target_pos: np.ndarray) -> float:
+        """Calculate curvature to an arbitrary target point"""
+        look_ahead_angle = math.atan2(target_pos[1] - current_pose[1], target_pos[0] - current_pose[0]) - current_pose[2]
+        distance = float(np.linalg.norm(target_pos - current_pose[:2]))
+        if distance == 0.0:
+            return 0.0
+        return 2.0 * math.sin(look_ahead_angle) / distance
 
     def calc_reference_translational_velocity(self, current_pose: np.ndarray, goal_pose: np.ndarray) -> float:
         """Calculate reference translational velocity considering approach to goal"""
@@ -384,69 +401,166 @@ class PurePursuitController:
         decel_distance = (self.V_MAX ** 2) / (2 * self.A_MAX)
         return goal_distance > decel_distance
 
-    def calc_optimal_velocity_considering_dynamic_window(self, current_velocity: np.ndarray, 
-                                                       regulated_v: float, curvature: float, 
-                                                       is_accel: bool) -> np.ndarray:
-        """Calculate optimal velocity considering dynamic window constraints"""
-        # Create dynamic window
+    def calc_forward_point_indices(self, current_pose: np.ndarray, current_idx: int, path: np.ndarray) -> np.ndarray:
+        candidate_indices = np.arange(current_idx, len(path), dtype=np.intp)
+        candidate_points = path[candidate_indices]
+        relative_points = candidate_points - current_pose[:2]
+        distances = np.linalg.norm(relative_points, axis=1)
+
+        c = math.cos(current_pose[2])
+        s = math.sin(current_pose[2])
+        body_x = c * relative_points[:, 0] + s * relative_points[:, 1]
+
+        forward_mask = (body_x > 1e-9) & (distances > 1e-9)
+        if np.any(forward_mask):
+            return candidate_indices[forward_mask]
+
+        nonzero_mask = distances > 1e-9
+        return candidate_indices[nonzero_mask]
+
+    def apply_min_look_ahead_distance_to_indices(
+        self,
+        current_idx: int,
+        path_distances: np.ndarray,
+        candidate_indices: np.ndarray,
+        min_look_ahead_distance: float,
+    ) -> np.ndarray:
+        if len(candidate_indices) == 0:
+            return candidate_indices
+
+        current_distance = float(path_distances[current_idx])
+        eligible_mask = path_distances[candidate_indices] >= (current_distance + min_look_ahead_distance - 1e-12)
+        eligible_indices = candidate_indices[eligible_mask]
+        return eligible_indices if len(eligible_indices) > 0 else candidate_indices
+
+    def calc_dynamic_window_bounds(self, current_velocity: np.ndarray) -> Tuple[float, float, float, float]:
         dw_vmax = min(current_velocity[0] + self.A_MAX * self.dt, self.V_MAX)
         dw_vmin = max(current_velocity[0] - self.A_MAX * self.dt, self.V_MIN)
         dw_wmax = min(current_velocity[1] + self.AW_MAX * self.dt, self.W_MAX)
         dw_wmin = max(current_velocity[1] - self.AW_MAX * self.dt, self.W_MIN)
-        
-        # Consider regulated velocity
+        return dw_vmin, dw_vmax, dw_wmin, dw_wmax
+
+    def calc_velocity_command_for_curvature(
+        self,
+        current_velocity: np.ndarray,
+        regulated_v: float,
+        curvature: float,
+        prefer_high_speed: bool,
+    ) -> Tuple[np.ndarray, bool, float]:
+        dw_vmin, dw_vmax, dw_wmin, dw_wmax = self.calc_dynamic_window_bounds(current_velocity)
+
         if dw_vmax > regulated_v:
             dw_vmax = max(dw_vmin, regulated_v)
-        
-        # Find intersection points between dynamic window and curvature line
-        velocity_candidates = []
-        p1 = (dw_vmin, curvature * dw_vmin)
-        p2 = (dw_vmax, curvature * dw_vmax)
-        velocity_candidates.extend([p1, p2])
-        
+
+        velocity_candidates = [
+            (dw_vmin, curvature * dw_vmin),
+            (dw_vmax, curvature * dw_vmax),
+        ]
         if curvature != 0.0:
-            p3 = (dw_wmin / curvature, dw_wmin)
-            p4 = (dw_wmax / curvature, dw_wmax)
-            velocity_candidates.extend([p3, p4])
-        
-        # Filter valid candidates
+            velocity_candidates.extend([
+                (dw_wmin / curvature, dw_wmin),
+                (dw_wmax / curvature, dw_wmax),
+            ])
+
         valid_velocity_candidates = []
-        for v in velocity_candidates:
-            if dw_vmin <= v[0] <= dw_vmax and dw_wmin <= v[1] <= dw_wmax:
-                valid_velocity_candidates.append(v)
-        
-        # Select optimal velocity
+        for candidate in velocity_candidates:
+            if dw_vmin <= candidate[0] <= dw_vmax and dw_wmin <= candidate[1] <= dw_wmax:
+                valid_velocity_candidates.append(candidate)
+
         if len(valid_velocity_candidates) > 0:
-            valid_velocity_candidates.sort(key=lambda x: x[0])
-            if is_accel:
-                next_velocity = valid_velocity_candidates[-1]
-            else:
-                next_velocity = valid_velocity_candidates[0]
-        else:
-            # If no intersection, find closest point on dynamic window boundary
-            dw_coords = [
-                (dw_vmin, dw_wmin), (dw_vmin, dw_wmax),
-                (dw_vmax, dw_wmin), (dw_vmax, dw_wmax)
-            ]
-            
-            distances = []
-            for p in dw_coords:
-                if curvature == 0:
-                    dist = abs(p[1])
-                else:
-                    dist = abs(curvature * p[0] - p[1]) / math.sqrt(curvature**2 + 1)
-                distances.append(dist)
-            
-            min_dist = min(distances)
-            min_dist_coords = [p for p, dist in zip(dw_coords, distances) if dist == min_dist]
-            min_dist_coords.sort(key=lambda x: x[0])
-            
-            if is_accel:
-                next_velocity = min_dist_coords[-1]
-            else:
-                next_velocity = min_dist_coords[0]
-        
-        return np.array(next_velocity)
+            valid_velocity_candidates.sort(key=lambda candidate: candidate[0])
+            selected_velocity = valid_velocity_candidates[-1] if prefer_high_speed else valid_velocity_candidates[0]
+            return np.array(selected_velocity, dtype=float), True, 0.0
+
+        dw_coords = [
+            (dw_vmin, dw_wmin), (dw_vmin, dw_wmax),
+            (dw_vmax, dw_wmin), (dw_vmax, dw_wmax)
+        ]
+        distances = []
+        for point in dw_coords:
+            dist = abs(curvature * point[0] - point[1]) / math.sqrt(curvature**2 + 1)
+            distances.append(dist)
+
+        min_dist = min(distances)
+        min_dist_coords = [point for point, dist in zip(dw_coords, distances) if dist == min_dist]
+        min_dist_coords.sort(key=lambda point: point[0])
+        selected_velocity = min_dist_coords[-1] if prefer_high_speed else min_dist_coords[0]
+        return np.array(selected_velocity, dtype=float), False, min_dist
+
+    def calc_dwpp_velocity_with_auto_look_ahead(
+        self,
+        current_pose: np.ndarray,
+        current_velocity: np.ndarray,
+        current_idx: int,
+        path: np.ndarray,
+        path_distances: np.ndarray,
+        is_accel: bool,
+        use_regulated_velocity: bool,
+    ) -> Tuple[np.ndarray, np.ndarray, float, float]:
+        forward_indices = self.calc_forward_point_indices(current_pose, current_idx, path)
+        min_look_ahead_distance = self.calc_min_look_ahead_distance_from_velocity(current_velocity)
+        forward_indices = self.apply_min_look_ahead_distance_to_indices(
+            current_idx=current_idx,
+            path_distances=path_distances,
+            candidate_indices=forward_indices,
+            min_look_ahead_distance=min_look_ahead_distance,
+        )
+
+        if len(forward_indices) == 0:
+            fallback_idx = min(current_idx, len(path) - 1)
+            forward_indices = np.array([fallback_idx], dtype=np.intp)
+
+        last_candidate = None
+
+        for candidate_idx in forward_indices:
+            look_ahead_pos = path[candidate_idx]
+            curvature = self.calc_curvature_to_point(current_pose, look_ahead_pos)
+            regulated_v = self.calc_regulated_translational_velocity(curvature) if use_regulated_velocity else self.V_MAX
+            next_velocity_ref, has_intersection, distance_to_line = self.calc_velocity_command_for_curvature(
+                current_velocity=current_velocity,
+                regulated_v=regulated_v,
+                curvature=curvature,
+                prefer_high_speed=True,
+            )
+
+            candidate = {
+                "velocity": next_velocity_ref,
+                "look_ahead_pos": look_ahead_pos,
+                "curvature": curvature,
+                "regulated_v": regulated_v,
+                "distance_to_line": distance_to_line,
+                "path_distance": float(path_distances[candidate_idx]),
+            }
+            last_candidate = candidate
+
+            if has_intersection:
+                return (
+                    candidate["velocity"],
+                    candidate["look_ahead_pos"],
+                    float(candidate["curvature"]),
+                    float(candidate["regulated_v"]),
+                )
+
+        selected_candidate = last_candidate
+        assert selected_candidate is not None
+        return (
+            selected_candidate["velocity"],
+            selected_candidate["look_ahead_pos"],
+            float(selected_candidate["curvature"]),
+            float(selected_candidate["regulated_v"]),
+        )
+
+    def calc_optimal_velocity_considering_dynamic_window(self, current_velocity: np.ndarray, 
+                                                       regulated_v: float, curvature: float, 
+                                                       is_accel: bool) -> np.ndarray:
+        """Calculate optimal velocity considering dynamic window constraints"""
+        next_velocity, _, _ = self.calc_velocity_command_for_curvature(
+            current_velocity=current_velocity,
+            regulated_v=regulated_v,
+            curvature=curvature,
+            prefer_high_speed=is_accel,
+        )
+        return next_velocity
 
     def calc_accel_constrained_velocity(self, current_velocity: np.ndarray, 
                                       next_velocity_ref: np.ndarray) -> np.ndarray:

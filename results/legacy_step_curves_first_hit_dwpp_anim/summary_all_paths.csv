@@ -1,0 +1,19 @@
+Path,Method,Constraint Violation Rate [%],Mean Position Error [m],Max Position Error [m],Mean Heading Error [deg],Travel Time [s]
+step_curve_theta45_l2,DWPP,0.0000,0.0077,0.0459,17.5280,58.8500
+step_curve_theta45_l2,DWPP with Auto Look-Ahead,0.0000,0.0246,0.2675,44.6390,N/A
+step_curve_theta45_l3,DWPP,0.0000,0.0073,0.0437,14.0569,64.0500
+step_curve_theta45_l3,DWPP with Auto Look-Ahead,0.0000,0.0154,0.1110,22.6161,N/A
+step_curve_theta45_l4,DWPP,0.0000,0.0084,0.0435,8.3892,65.3500
+step_curve_theta45_l4,DWPP with Auto Look-Ahead,0.0000,0.0225,0.4043,21.9602,N/A
+step_curve_theta90_l2,DWPP,0.0000,0.0059,0.0167,8.4593,52.5500
+step_curve_theta90_l2,DWPP with Auto Look-Ahead,0.0000,0.0267,0.3145,25.7282,219.5000
+step_curve_theta90_l3,DWPP,0.0000,0.0071,0.0191,7.5208,54.0000
+step_curve_theta90_l3,DWPP with Auto Look-Ahead,0.0000,0.0274,0.3191,18.3899,206.5000
+step_curve_theta90_l4,DWPP,0.0000,0.0089,0.0264,6.6562,54.1000
+step_curve_theta90_l4,DWPP with Auto Look-Ahead,0.0000,0.0301,0.3851,21.2355,245.0000
+step_curve_theta135_l2,DWPP,0.0000,0.0076,0.0231,13.5471,53.0500
+step_curve_theta135_l2,DWPP with Auto Look-Ahead,0.0000,0.0746,0.9031,19.2988,58.8500
+step_curve_theta135_l3,DWPP,0.0000,0.0087,0.0322,13.0189,54.0500
+step_curve_theta135_l3,DWPP with Auto Look-Ahead,0.0000,0.1673,1.3500,51.5017,72.9500
+step_curve_theta135_l4,DWPP,0.0000,0.0110,0.0457,12.2494,55.7500
+step_curve_theta135_l4,DWPP with Auto Look-Ahead,0.0000,0.1459,2.0427,40.2377,238.8500

@@ -1,0 +1,6 @@
+| Method | Constraint Violation Rate [%] | Mean Position Error [m] | Max Position Error [m] | Mean Heading Error [deg] | Travel Time [s] |
+|---|---|---|---|---|---|
+| DWPP for Diff-drive | 0.0000 | 0.3187 | 0.9036 | 48.9683 | 34.6500 |
+| VP for Omni (min L) | 100.0000 | 0.0179 | 0.1139 | 19.5069 | 28.8500 |
+| VP for Omni (max L) | 99.3902 | 0.0184 | 0.0864 | 19.4673 | 24.6000 |
+| DWVP for Omni | 0.0000 | 0.0077 | 0.0242 | 10.8636 | 34.7000 |
