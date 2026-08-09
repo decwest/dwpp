@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, Sequence
 
@@ -44,8 +45,19 @@ def configure_style() -> None:
 
 def save_figure(fig: plt.Figure, output_base: Path) -> None:
     output_base.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_base.with_suffix(".pdf"))
-    fig.savefig(output_base.with_suffix(".png"))
+    fixed_time = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    fig.savefig(
+        output_base.with_suffix(".pdf"),
+        metadata={
+            "Creator": "DWPP revision simulator",
+            "CreationDate": fixed_time,
+            "ModDate": fixed_time,
+        },
+    )
+    fig.savefig(
+        output_base.with_suffix(".png"),
+        metadata={"Software": "DWPP revision simulator"},
+    )
     plt.close(fig)
 
 
