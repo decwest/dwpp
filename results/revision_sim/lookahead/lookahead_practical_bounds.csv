@@ -1,0 +1,4 @@
+sigma_xy,practical_lower_bound,criterion,minimum_mean_error
+0,0.3,100% goal; error <= 1.10 * successful minimum,0.036215748
+0.02,0.3,100% goal; error <= 1.10 * successful minimum,0.00833705169
+0.05,0.4,100% goal; error <= 1.10 * successful minimum,0.010512434
