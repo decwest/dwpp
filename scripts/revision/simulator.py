@@ -195,6 +195,10 @@ def simulate_trial(
     rng = np.random.default_rng(seed)
     true_pose = (0.0, 0.0, 0.0)
     previous_command = (0.0, 0.0)
+    # Raw controller output of the previous cycle. The violation metric of the
+    # paper (Sec. 4.1) compares consecutive RAW commands (the plugin logger uses
+    # its own previous output as v_now), independent of the downstream clipping.
+    previous_raw_command = (0.0, 0.0)
     prune_index = 0
     positions = [true_pose]
     commands: list[tuple[float, float]] = []
@@ -217,12 +221,13 @@ def simulate_trial(
         if evaluate_velocity_constraints(
             command[0],
             command[1],
-            previous_command[0],
-            previous_command[1],
+            previous_raw_command[0],
+            previous_raw_command[1],
             config.limits_dict(),
             config.dt,
         ):
             violations += 1
+        previous_raw_command = command
         # The controller output is checked as v_cmd. The acceleration-limited
         # velocity accepted by the base is then applied without lag (A1). This
         # is the same deterministic projection used by the validated real-trial
