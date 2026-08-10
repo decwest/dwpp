@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Sequence
 
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/dwpp-matplotlib-cache")
 
@@ -13,6 +13,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
 import numpy as np
 
 
@@ -24,6 +25,7 @@ COLORS = {
     "APP+DW": "#AA3377",
 }
 MARKERS = {"PP": "o", "APP": "s", "RPP": "^", "DWPP": "D", "APP+DW": "P"}
+NOISE_COLORS = ("#4477AA", "#228833", "#AA3377")
 
 
 def configure_style() -> None:
@@ -59,6 +61,119 @@ def save_figure(fig: plt.Figure, output_base: Path) -> None:
         metadata={"Software": "DWPP revision simulator"},
     )
     plt.close(fig)
+
+
+def _series_color(label: str, index: int) -> str:
+    """Use paper controller colors, falling back to distinct series colors."""
+    controller = label.split("@", maxsplit=1)[0]
+    if controller in COLORS:
+        return COLORS[controller]
+    default_colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
+    return default_colors[index % len(default_colors)]
+
+
+def plot_trajectories(
+    reference_path: np.ndarray,
+    panels: Sequence[tuple[str, Sequence[tuple[str, np.ndarray]]]],
+    output_base: Path,
+) -> None:
+    """Plot true trajectories in the coordinate convention used by the paper."""
+    if not panels:
+        raise ValueError("At least one trajectory panel is required")
+
+    configure_style()
+    panel_count = len(panels)
+    figsize = (6.5, 6.5) if panel_count == 1 else (5.2 * panel_count, 4.8)
+    fig, axes = plt.subplots(1, panel_count, figsize=figsize, squeeze=False)
+    for ax, (title, trajectories) in zip(axes[0], panels, strict=True):
+        for index, (label, positions) in enumerate(trajectories):
+            values = np.asarray(positions, dtype=float)
+            ax.plot(
+                values[:, 1],
+                -values[:, 0],
+                color=_series_color(label, index),
+                label=label,
+                linewidth=1.0,
+            )
+        ax.plot(
+            reference_path[:, 1],
+            -reference_path[:, 0],
+            "k--",
+            label="Reference Path",
+            linewidth=1.0,
+            alpha=0.7,
+        )
+        ax.set_xlabel(r"$x$ [m]")
+        ax.set_ylabel(r"$y$ [m]")
+        ax.set_title(title)
+        ax.grid(True, alpha=0.3)
+        ax.set_aspect("equal")
+        ax.invert_xaxis()
+        ax.invert_yaxis()
+        ax.legend()
+    fig.tight_layout()
+    save_figure(fig, output_base)
+
+
+def plot_lookahead_tradeoff(
+    groups: Sequence[tuple[str, Sequence[float], Sequence[float], Sequence[float]]],
+    output_base: Path,
+    *,
+    title: str,
+) -> None:
+    """Plot tracking error and travel time against lookahead on twin axes."""
+    configure_style()
+    fig, error_ax = plt.subplots()
+    time_ax = error_ax.twinx()
+    sigma_handles: list[Line2D] = []
+    for index, (label, lookaheads, errors, times) in enumerate(groups):
+        color = NOISE_COLORS[index % len(NOISE_COLORS)]
+        error_ax.plot(
+            lookaheads,
+            errors,
+            color=color,
+            marker="o",
+            linestyle="-",
+            linewidth=1.5,
+        )
+        time_ax.plot(
+            lookaheads,
+            times,
+            color=color,
+            marker="^",
+            linestyle="--",
+            linewidth=1.5,
+        )
+        sigma_handles.append(Line2D([0], [0], color=color, linewidth=2.0, label=label))
+
+    quantity_handles = [
+        Line2D(
+            [0],
+            [0],
+            color="black",
+            marker="o",
+            linestyle="-",
+            linewidth=1.5,
+            label="Mean tracking error",
+        ),
+        Line2D(
+            [0],
+            [0],
+            color="black",
+            marker="^",
+            linestyle="--",
+            linewidth=1.5,
+            label="Travel time",
+        ),
+    ]
+    error_ax.set_xlabel(r"Lookahead distance $L$ [m]")
+    error_ax.set_ylabel("Mean tracking error [m]")
+    time_ax.set_ylabel("Travel time [s]")
+    error_ax.set_title(title)
+    error_ax.grid(True, alpha=0.3)
+    error_ax.legend(handles=[*sigma_handles, *quantity_handles], loc="best")
+    fig.tight_layout()
+    save_figure(fig, output_base)
 
 
 def _annotate_points(
