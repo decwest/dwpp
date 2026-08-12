@@ -34,10 +34,10 @@ def configure_style() -> None:
             "font.family": "serif",
             "font.serif": ["Times New Roman", "Times", "Nimbus Roman", "DejaVu Serif"],
             "mathtext.fontset": "stix",
-            "font.size": 10,
-            "axes.labelsize": 10,
-            "axes.titlesize": 10,
-            "legend.fontsize": 9,
+            "font.size": 14,
+            "axes.labelsize": 14,
+            "axes.titlesize": 14,
+            "legend.fontsize": 12,
             "figure.figsize": (6.0, 4.0),
             "savefig.bbox": "tight",
             "savefig.dpi": 220,
@@ -200,7 +200,7 @@ def _annotate_points(
                 (x, y),
                 xytext=offset,
                 textcoords="offset points",
-                fontsize=6.5,
+                fontsize=9,
             )
             fig.canvas.draw()
             box = candidate.get_window_extent(renderer).expanded(1.10, 1.20)
@@ -224,7 +224,7 @@ def _annotate_points(
                 (x, y),
                 xytext=fallback,
                 textcoords="offset points",
-                fontsize=6.5,
+                fontsize=9,
                 arrowprops={"arrowstyle": "-", "linewidth": 0.35, "alpha": 0.6},
             )
             fig.canvas.draw()
