@@ -363,10 +363,14 @@ def run_app(output_root: Path = DEFAULT_OUTPUT_ROOT) -> dict[str, object]:
 
     def build(arm: str, value: float) -> SimulationConfig:
         base = controller_config("APP")
+        # 本スタディのみ上側クランプを緩和 (0.5 m/s x 3.0 s = 1.5 m < 2.0 m で
+        # スイープ全域が非飽和になり、velocity-scaled lookahead の効果を分離できる)。
+        # 下側クランプ 0.3 m は安定性の床として凍結値を維持。
         return replace(
             base,
             controller_name=arm,
             lookahead_time=value,
+            max_lookahead=2.0,
             use_dynamic_window=arm == "APP+DW",
             use_curvature_regulation=False,
         )
