@@ -10,10 +10,10 @@ from typing import Callable, Iterable, Sequence
 import numpy as np
 
 from .plotting import (
+    COLORS,
     plot_bands,
     plot_lines,
     plot_lookahead_tradeoff,
-    plot_tradeoff,
     plot_trajectories,
 )
 from .simulator import (
@@ -393,9 +393,9 @@ def run_app(output_root: Path = DEFAULT_OUTPUT_ROOT) -> dict[str, object]:
         path_c_groups.append(
             (
                 arm,
-                [float(row["travel_time"]) for row in selected],
-                [float(row["mean_error"]) for row in selected],
                 [float(row["lookahead_time"]) for row in selected],
+                [float(row["mean_error"]) for row in selected],
+                [float(row["travel_time"]) for row in selected],
             )
         )
         violation_groups.append(
@@ -405,11 +405,12 @@ def run_app(output_root: Path = DEFAULT_OUTPUT_ROOT) -> dict[str, object]:
                 [float(row["violation_ratio"]) for row in selected],
             )
         )
-    plot_tradeoff(
+    plot_lookahead_tradeoff(
         path_c_groups,
         out / "app_tradeoff",
         title="PathC: adaptive-lookahead trade-off",
-        annotation_label=r"annotation: $l_t$",
+        xlabel=r"Lookahead time gain $l_t$ [s]",
+        colors=[COLORS["APP"], COLORS["APP+DW"]],
     )
     plot_lines(
         violation_groups,
@@ -474,9 +475,9 @@ def run_rpp(output_root: Path = DEFAULT_OUTPUT_ROOT) -> dict[str, object]:
         tradeoff_groups.append(
             (
                 arm,
-                [float(row["travel_time"]) for row in selected],
-                [float(row["mean_error"]) for row in selected],
                 [float(row["regulated_min_radius"]) for row in selected],
+                [float(row["mean_error"]) for row in selected],
+                [float(row["travel_time"]) for row in selected],
             )
         )
         violation_groups.append(
@@ -486,11 +487,12 @@ def run_rpp(output_root: Path = DEFAULT_OUTPUT_ROOT) -> dict[str, object]:
                 [float(row["violation_ratio"]) for row in selected],
             )
         )
-    plot_tradeoff(
+    plot_lookahead_tradeoff(
         tradeoff_groups,
         out / "rpp_tradeoff",
         title="PathC: curvature-regulation trade-off",
-        annotation_label=r"annotation: $R_{min}$",
+        xlabel=r"Regulated minimum radius $R_{\min}$ [m]",
+        colors=[COLORS["RPP"], COLORS["DWPP"]],
     )
     plot_lines(
         violation_groups,

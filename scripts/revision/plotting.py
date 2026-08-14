@@ -120,14 +120,16 @@ def plot_lookahead_tradeoff(
     output_base: Path,
     *,
     title: str,
+    xlabel: str = r"Lookahead distance $L$ [m]",
+    colors: Sequence[str] = NOISE_COLORS,
 ) -> None:
-    """Plot tracking error and travel time against lookahead on twin axes."""
+    """Plot tracking error and travel time against the swept parameter on twin axes."""
     configure_style()
     fig, error_ax = plt.subplots()
     time_ax = error_ax.twinx()
     sigma_handles: list[Line2D] = []
     for index, (label, lookaheads, errors, times) in enumerate(groups):
-        color = NOISE_COLORS[index % len(NOISE_COLORS)]
+        color = colors[index % len(colors)]
         error_ax.plot(
             lookaheads,
             errors,
@@ -166,7 +168,7 @@ def plot_lookahead_tradeoff(
             label="Travel time",
         ),
     ]
-    error_ax.set_xlabel(r"Lookahead distance $L$ [m]")
+    error_ax.set_xlabel(xlabel)
     error_ax.set_ylabel("Mean tracking error [m]")
     time_ax.set_ylabel("Travel time [s]")
     error_ax.set_title(title)
