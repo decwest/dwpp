@@ -419,12 +419,13 @@ def run_app(output_root: Path = DEFAULT_OUTPUT_ROOT) -> dict[str, object]:
         ylabel="Constraint violation ratio [%]",
         title="PathC: dynamic-constraint violations",
     )
-    trajectory_values = (0.6, 1.4, 3.0)
-    plot_trajectories(
-        path,
-        [
+    trajectory_values = (0.6, 1.4, 2.2, 3.0)
+
+    def arm_panel(arm: str) -> list[tuple[str, list[tuple[str, np.ndarray]]]]:
+        # Empty panel title: the manuscript names the arms in subcaptions.
+        return [
             (
-                arm,
+                "",
                 [
                     (
                         rf"$l_t={value:g}$ s",
@@ -433,9 +434,21 @@ def run_app(output_root: Path = DEFAULT_OUTPUT_ROOT) -> dict[str, object]:
                     for value in trajectory_values
                 ],
             )
-            for arm in ("APP", "APP+DW")
-        ],
-        out / "app_trajectories",
+        ]
+
+    # Draw APP+DW first and reuse its plotting range for APP so the two
+    # panels are directly comparable (the APP oscillation may leave the frame).
+    dw_xlim, dw_ylim = plot_trajectories(
+        path,
+        arm_panel("APP+DW"),
+        out / "app_trajectories_appdw",
+    )
+    plot_trajectories(
+        path,
+        arm_panel("APP"),
+        out / "app_trajectories_app",
+        xlim=dw_xlim,
+        ylim=dw_ylim,
     )
     comparisons = []
     for path_name in paths:

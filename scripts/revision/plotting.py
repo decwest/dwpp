@@ -76,8 +76,15 @@ def plot_trajectories(
     reference_path: np.ndarray,
     panels: Sequence[tuple[str, Sequence[tuple[str, np.ndarray]]]],
     output_base: Path,
-) -> None:
-    """Plot true trajectories in the coordinate convention used by the paper."""
+    *,
+    xlim: tuple[float, float] | None = None,
+    ylim: tuple[float, float] | None = None,
+) -> tuple[tuple[float, float], tuple[float, float]]:
+    """Plot true trajectories in the coordinate convention used by the paper.
+
+    Returns the final (xlim, ylim) of the first panel so a later call can
+    reuse the same plotting range.
+    """
     if not panels:
         raise ValueError("At least one trajectory panel is required")
 
@@ -110,9 +117,15 @@ def plot_trajectories(
         ax.set_aspect("equal")
         ax.invert_xaxis()
         ax.invert_yaxis()
+        if xlim is not None:
+            ax.set_xlim(xlim)
+        if ylim is not None:
+            ax.set_ylim(ylim)
         ax.legend()
     fig.tight_layout()
+    limits = (axes[0][0].get_xlim(), axes[0][0].get_ylim())
     save_figure(fig, output_base)
+    return limits
 
 
 def plot_lookahead_tradeoff(
