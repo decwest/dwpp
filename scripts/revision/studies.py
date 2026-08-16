@@ -491,7 +491,7 @@ def run_app(output_root: Path = DEFAULT_OUTPUT_ROOT) -> dict[str, object]:
 
 
 def run_rpp(output_root: Path = DEFAULT_OUTPUT_ROOT) -> dict[str, object]:
-    values = np.round(np.linspace(0.3, 2.0, 10), 10)
+    values = np.round(np.linspace(0.2, 2.0, 10), 10)
     path = make_paths()["PathC"]
     paths = {"PathC": path}
 
@@ -499,7 +499,15 @@ def run_rpp(output_root: Path = DEFAULT_OUTPUT_ROOT) -> dict[str, object]:
         base = controller_config(arm)
         return replace(base, regulated_min_radius=value)
 
-    rows = _study_rows(values, paths, ("RPP", "DWPP"), build, "regulated_min_radius")
+    trial_results: dict[tuple[str, str, float], TrialResult] = {}
+    rows = _study_rows(
+        values,
+        paths,
+        ("RPP", "DWPP"),
+        build,
+        "regulated_min_radius",
+        trial_results,
+    )
     out = output_root / "rpp"
     _write_rpp_table(rows, out)
     tradeoff_groups = []
@@ -535,25 +543,36 @@ def run_rpp(output_root: Path = DEFAULT_OUTPUT_ROOT) -> dict[str, object]:
         ylabel="Constraint violation ratio [%]",
         title="PathC: dynamic-constraint violations",
     )
-    # The requested representative value 0.9 is not one of the unchanged
-    # 10-point sweep values, so generate these three trajectories explicitly.
-    trajectory_values = (0.3, 0.9, 2.0)
-    plot_trajectories(
-        path,
-        [
+    trajectory_values = (0.2, 0.8, 1.4, 2.0)
+
+    def arm_panel(arm: str) -> list[tuple[str, list[tuple[str, np.ndarray]]]]:
+        # Empty panel title: the manuscript names the arms in subcaptions.
+        return [
             (
-                arm,
+                "",
                 [
                     (
                         rf"$R_{{min}}={value:g}$ m",
-                        _run(path, "PathC", build(arm, value)).positions,
+                        trial_results["PathC", arm, value].positions,
                     )
                     for value in trajectory_values
                 ],
             )
-            for arm in ("RPP", "DWPP")
-        ],
-        out / "rpp_trajectories",
+        ]
+
+    # Draw DWPP first and reuse its plotting range for RPP so the two
+    # panels are directly comparable.
+    dwpp_xlim, dwpp_ylim = plot_trajectories(
+        path,
+        arm_panel("DWPP"),
+        out / "rpp_trajectories_dwpp",
+    )
+    plot_trajectories(
+        path,
+        arm_panel("RPP"),
+        out / "rpp_trajectories_rpp",
+        xlim=dwpp_xlim,
+        ylim=dwpp_ylim,
     )
     summary: dict[str, object] = {"rows": rows}
     for arm in ("RPP", "DWPP"):
