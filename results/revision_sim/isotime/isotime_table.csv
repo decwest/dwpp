@@ -1,4 +1,4 @@
 Path,Controller,v_max [m/s],Time [s],Mean err. [m],Max err. [m],Violation [%]
-PathC,PP@matched,0.416,23.6,0.0975,0.446,24
-PathC,APP@matched,0.416,23.8,0.0965,0.456,27.3
-PathC,DWPP,0.5,23.7,0.0249,0.11,0
+PathC,PP@matched,0.416,23.6,0.10,0.45,24.0
+PathC,APP@matched,0.416,23.8,0.10,0.46,27.3
+PathC,DWPP,0.5,23.7,0.02,0.11,0.0

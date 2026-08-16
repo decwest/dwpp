@@ -92,6 +92,26 @@ def _sig(value: object) -> str:
     return f"{float(value):.3g}"
 
 
+# Manuscript display precision, matched to the real-robot tables:
+# violation 1 decimal, errors 2 decimals, travel time 1 decimal.
+_METRIC_DECIMALS = {
+    "violation_ratio": 1,
+    "mean_error": 2,
+    "max_error": 2,
+    "travel_time": 1,
+}
+
+
+def _dec(value: object, places: int) -> str:
+    return f"{float(value):.{places}f}"
+
+
+def _param(value: object) -> str:
+    """Swept-parameter display: significant digits, but never bare integers."""
+    text = _sig(value)
+    return text if "." in text else f"{text}.0"
+
+
 def _latex_display(value: object) -> str:
     return _latex_escape(value).replace(" +- ", r" $\pm$ ")
 
@@ -126,15 +146,15 @@ def _write_app_table(rows: Sequence[dict[str, object]], out: Path) -> None:
         dynamic = _filter(rows, arm="APP+DW", lookahead_time=value)[0]
         table_rows.append(
             {
-                "l_t [s]": _sig(value),
-                "APP Violation [%]": _sig(app["violation_ratio"]),
-                "APP Mean err. [m]": _sig(app["mean_error"]),
-                "APP Max err. [m]": _sig(app["max_error"]),
-                "APP Time [s]": _sig(app["travel_time"]),
-                "APP+DW Violation [%]": _sig(dynamic["violation_ratio"]),
-                "APP+DW Mean err. [m]": _sig(dynamic["mean_error"]),
-                "APP+DW Max err. [m]": _sig(dynamic["max_error"]),
-                "APP+DW Time [s]": _sig(dynamic["travel_time"]),
+                "l_t [s]": _dec(value, 1),
+                "APP Violation [%]": _dec(app["violation_ratio"], 1),
+                "APP Mean err. [m]": _dec(app["mean_error"], 2),
+                "APP Max err. [m]": _dec(app["max_error"], 2),
+                "APP Time [s]": _dec(app["travel_time"], 1),
+                "APP+DW Violation [%]": _dec(dynamic["violation_ratio"], 1),
+                "APP+DW Mean err. [m]": _dec(dynamic["mean_error"], 2),
+                "APP+DW Max err. [m]": _dec(dynamic["max_error"], 2),
+                "APP+DW Time [s]": _dec(dynamic["travel_time"], 1),
             }
         )
     write_csv(table_rows, out / "app_table.csv")
@@ -158,15 +178,15 @@ def _write_rpp_table(rows: Sequence[dict[str, object]], out: Path) -> None:
         dwpp = _filter(rows, arm="DWPP", regulated_min_radius=value)[0]
         table_rows.append(
             {
-                "R_min [m]": _sig(value),
-                "RPP Violation [%]": _sig(rpp["violation_ratio"]),
-                "RPP Mean err. [m]": _sig(rpp["mean_error"]),
-                "RPP Max err. [m]": _sig(rpp["max_error"]),
-                "RPP Time [s]": _sig(rpp["travel_time"]),
-                "DWPP Violation [%]": _sig(dwpp["violation_ratio"]),
-                "DWPP Mean err. [m]": _sig(dwpp["mean_error"]),
-                "DWPP Max err. [m]": _sig(dwpp["max_error"]),
-                "DWPP Time [s]": _sig(dwpp["travel_time"]),
+                "R_min [m]": _param(value),
+                "RPP Violation [%]": _dec(rpp["violation_ratio"], 1),
+                "RPP Mean err. [m]": _dec(rpp["mean_error"], 2),
+                "RPP Max err. [m]": _dec(rpp["max_error"], 2),
+                "RPP Time [s]": _dec(rpp["travel_time"], 1),
+                "DWPP Violation [%]": _dec(dwpp["violation_ratio"], 1),
+                "DWPP Mean err. [m]": _dec(dwpp["mean_error"], 2),
+                "DWPP Max err. [m]": _dec(dwpp["max_error"], 2),
+                "DWPP Time [s]": _dec(dwpp["travel_time"], 1),
             }
         )
     write_csv(table_rows, out / "rpp_table.csv")
@@ -184,10 +204,11 @@ def _write_rpp_table(rows: Sequence[dict[str, object]], out: Path) -> None:
 
 
 def _mean_std_cell(row: dict[str, object], metric: str, *, noisy: bool) -> str:
-    mean = _sig(row[f"{metric}_mean"])
+    places = _METRIC_DECIMALS[metric]
+    mean = _dec(row[f"{metric}_mean"], places)
     if not noisy:
         return mean
-    return f"{mean} +- {_sig(row[f'{metric}_std'])}"
+    return f"{mean} +- {_dec(row[f'{metric}_std'], places)}"
 
 
 def _write_noise_table(rows: Sequence[dict[str, object]], out: Path) -> None:
@@ -224,13 +245,13 @@ def _write_lookahead_table(rows: Sequence[dict[str, object]], out: Path) -> None
         noisy = _filter(rows, lookahead=value, sigma_xy=0.05)[0]
         table_rows.append(
             {
-                "L [m]": _sig(value),
-                "sigma=0 Mean err. [m]": _sig(noiseless["mean_error_mean"]),
-                "sigma=0 Max err. [m]": _sig(noiseless["max_error_mean"]),
-                "sigma=0 Time [s]": _sig(noiseless["travel_time_mean"]),
-                "sigma=0.05 Mean err. [m]": _sig(noisy["mean_error_mean"]),
-                "sigma=0.05 Max err. [m]": _sig(noisy["max_error_mean"]),
-                "sigma=0.05 Time [s]": _sig(noisy["travel_time_mean"]),
+                "L [m]": _dec(value, 1),
+                "sigma=0 Mean err. [m]": _dec(noiseless["mean_error_mean"], 2),
+                "sigma=0 Max err. [m]": _dec(noiseless["max_error_mean"], 2),
+                "sigma=0 Time [s]": _dec(noiseless["travel_time_mean"], 1),
+                "sigma=0.05 Mean err. [m]": _dec(noisy["mean_error_mean"], 2),
+                "sigma=0.05 Max err. [m]": _dec(noisy["max_error_mean"], 2),
+                "sigma=0.05 Time [s]": _dec(noisy["travel_time_mean"], 1),
                 "sigma=0.05 Reach [%]": _sig(noisy["reached_goal_rate"]),
             }
         )
@@ -254,10 +275,10 @@ def _write_isotime_table(rows: Sequence[dict[str, object]], out: Path) -> None:
             "Path": row["path"],
             "Controller": row["controller"],
             "v_max [m/s]": _sig(row["v_max"]),
-            "Time [s]": _sig(row["travel_time"]),
-            "Mean err. [m]": _sig(row["mean_error"]),
-            "Max err. [m]": _sig(row["max_error"]),
-            "Violation [%]": _sig(row["violation_ratio"]),
+            "Time [s]": _dec(row["travel_time"], 1),
+            "Mean err. [m]": _dec(row["mean_error"], 2),
+            "Max err. [m]": _dec(row["max_error"], 2),
+            "Violation [%]": _dec(row["violation_ratio"], 1),
         }
         for row in rows
     ]
