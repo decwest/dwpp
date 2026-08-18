@@ -74,9 +74,11 @@ class TrialResult:
     mean_error: float
     max_error: float
     violation_ratio: float
+    max_abs_curvature: float
     positions: "NDArray[np.float64]"
     commands: "NDArray[np.float64]"
     applied_commands: "NDArray[np.float64]"
+    curvatures: "NDArray[np.float64]"
 
     def as_row(self) -> dict[str, object]:
         return {
@@ -91,6 +93,7 @@ class TrialResult:
             "mean_error": self.mean_error,
             "max_error": self.max_error,
             "violation_ratio": self.violation_ratio,
+            "max_abs_curvature": self.max_abs_curvature,
         }
 
 
@@ -203,6 +206,7 @@ def simulate_trial(
     positions = [true_pose]
     commands: list[tuple[float, float]] = []
     applied_commands: list[tuple[float, float]] = []
+    curvatures: list[float] = []
     violations = 0
     max_steps = int(math.ceil(config.timeout / config.dt))
     reached_goal = math.hypot(true_pose[0] - path[-1, 0], true_pose[1] - path[-1, 1]) <= config.goal_tolerance
@@ -215,7 +219,7 @@ def simulate_trial(
             true_pose[1] + float(rng.normal(0.0, sigma_xy)),
             true_pose[2] + float(rng.normal(0.0, sigma_yaw)),
         )
-        command, prune_index = compute_command(
+        command, prune_index, curvature = compute_command(
             path, observed_pose, previous_command, prune_index, config
         )
         if evaluate_velocity_constraints(
@@ -245,11 +249,13 @@ def simulate_trial(
         positions.append(true_pose)
         commands.append(command)
         applied_commands.append(applied_command)
+        curvatures.append(curvature)
         reached_goal = math.hypot(true_pose[0] - path[-1, 0], true_pose[1] - path[-1, 1]) <= config.goal_tolerance
 
     positions_array = np.asarray(positions, dtype=float)
     commands_array = np.asarray(commands, dtype=float).reshape((-1, 2))
     applied_commands_array = np.asarray(applied_commands, dtype=float).reshape((-1, 2))
+    curvatures_array = np.asarray(curvatures, dtype=float)
     errors = _tracking_errors(positions_array, path)
     steps = len(commands)
     return TrialResult(
@@ -264,7 +270,9 @@ def simulate_trial(
         mean_error=float(np.mean(errors)),
         max_error=float(np.max(errors)),
         violation_ratio=100.0 * violations / steps if steps else 0.0,
+        max_abs_curvature=float(np.max(np.abs(curvatures_array))) if steps else 0.0,
         positions=positions_array,
         commands=commands_array,
         applied_commands=applied_commands_array,
+        curvatures=curvatures_array,
     )

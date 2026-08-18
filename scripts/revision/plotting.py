@@ -79,6 +79,8 @@ def plot_trajectories(
     *,
     xlim: tuple[float, float] | None = None,
     ylim: tuple[float, float] | None = None,
+    figsize: tuple[float, float] | None = None,
+    legend: bool = True,
 ) -> tuple[tuple[float, float], tuple[float, float]]:
     """Plot true trajectories in the coordinate convention used by the paper.
 
@@ -90,7 +92,8 @@ def plot_trajectories(
 
     configure_style()
     panel_count = len(panels)
-    figsize = (6.5, 6.5) if panel_count == 1 else (5.2 * panel_count, 4.8)
+    if figsize is None:
+        figsize = (6.5, 6.5) if panel_count == 1 else (5.2 * panel_count, 4.8)
     fig, axes = plt.subplots(1, panel_count, figsize=figsize, squeeze=False)
     for ax, (title, trajectories) in zip(axes[0], panels, strict=True):
         for index, (label, positions) in enumerate(trajectories):
@@ -121,11 +124,32 @@ def plot_trajectories(
             ax.set_xlim(xlim)
         if ylim is not None:
             ax.set_ylim(ylim)
-        ax.legend()
+        if legend:
+            ax.legend()
     fig.tight_layout()
     limits = (axes[0][0].get_xlim(), axes[0][0].get_ylim())
     save_figure(fig, output_base)
     return limits
+
+
+def save_trajectory_legend(series_labels: Sequence[str], output_base: Path) -> None:
+    """Shared horizontal legend strip for compact trajectory panels."""
+    configure_style()
+    handles = [
+        Line2D([0], [0], color=_series_color(label, index), linewidth=1.5, label=label)
+        for index, label in enumerate(series_labels)
+    ]
+    handles.append(
+        Line2D([0], [0], color="black", linestyle="--", linewidth=1.5, alpha=0.7,
+               label="Reference Path")
+    )
+    with plt.rc_context({"font.size": 12, "legend.fontsize": 11}):
+        fig = plt.figure(figsize=(7.2, 0.4))
+        ax = fig.add_subplot(111)
+        ax.axis("off")
+        ax.legend(handles=handles, loc="center", ncol=len(handles), frameon=True,
+                  handlelength=1.5, columnspacing=1.0, handletextpad=0.5)
+        save_figure(fig, output_base)
 
 
 def plot_lookahead_tradeoff(
@@ -303,6 +327,64 @@ def plot_lines(
     ax.grid(True, alpha=0.3)
     ax.legend()
     save_figure(fig, output_base)
+
+
+def plot_velocity_profiles(
+    panels: Sequence[tuple[str, float, np.ndarray, np.ndarray]],
+    output_base: Path,
+    *,
+    v_max: float,
+    w_max: float,
+) -> None:
+    """Per-controller v/omega time series for the 2x2 subfigure layout.
+
+    Each panel entry is (label, dt, raw_commands Nx2, applied_commands Nx2)
+    and produces one <output_base>_<label>.pdf with v on top and omega below;
+    red shows the raw controller output, blue the executed command after the
+    acceleration-limited projection, black dashed lines the velocity limits.
+    The omega axis is clipped to +-1.5 rad/s as in the real-robot figures, so
+    raw commands far outside the window run off the frame. A shared legend
+    strip is written to <output_base>_legend.pdf.
+    """
+    configure_style()
+    # Match the real-robot velocity-profile style (font 20, 7x3 in, v left and
+    # omega right) so the subfigures render at the same visual size.
+    for label, dt, raw, applied in panels:
+        raw = np.asarray(raw, dtype=float)
+        applied = np.asarray(applied, dtype=float)
+        t = np.arange(len(raw)) * dt
+        with plt.rc_context({"font.size": 20}):
+            fig, (ax_v, ax_w) = plt.subplots(1, 2, figsize=(7, 3))
+            ax_v.plot(t, raw[:, 0], "-", color="red", linewidth=1, alpha=0.8)
+            ax_v.plot(t, applied[:, 0], "-", color="blue", linewidth=1)
+            ax_v.axhline(y=v_max, color="black", linestyle="--", linewidth=1, alpha=0.7)
+            ax_v.set_xlabel(r"$t$ [s]")
+            ax_v.set_ylabel(r"$v$ [m/s]")
+            ax_v.set_yticks([0, 0.25, 0.50])
+            ax_v.grid(True, alpha=0.3)
+            ax_w.plot(t, raw[:, 1], "-", color="red", linewidth=1, alpha=0.8)
+            ax_w.plot(t, applied[:, 1], "-", color="blue", linewidth=1)
+            ax_w.axhline(y=w_max, color="black", linestyle="--", linewidth=2, alpha=0.7)
+            ax_w.axhline(y=-w_max, color="black", linestyle="--", linewidth=2, alpha=0.7)
+            ax_w.set_xlabel(r"$t$ [s]")
+            ax_w.set_ylabel(r"$\omega$ [rad/s]")
+            ax_w.set_ylim(-1.5, 1.5)
+            ax_w.set_yticks([-1, 0, 1])
+            ax_w.grid(True, alpha=0.3)
+            fig.tight_layout()
+            save_figure(fig, output_base.parent / f"{output_base.name}_{label.lower()}")
+    handles = [
+        Line2D([0], [0], color="red", linewidth=1.5, alpha=0.8, label="Raw command"),
+        Line2D([0], [0], color="blue", linewidth=1.5, label="Executed command"),
+        Line2D([0], [0], color="black", linestyle="--", linewidth=1.5, label="Velocity limits"),
+    ]
+    with plt.rc_context({"font.size": 12, "legend.fontsize": 11}):
+        fig = plt.figure(figsize=(6.4, 0.4))
+        ax = fig.add_subplot(111)
+        ax.axis("off")
+        ax.legend(handles=handles, loc="center", ncol=3, frameon=True,
+                  handlelength=1.8, columnspacing=1.4, handletextpad=0.6)
+        save_figure(fig, output_base.parent / f"{output_base.name}_legend")
 
 
 def plot_bands(

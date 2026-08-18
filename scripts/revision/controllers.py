@@ -216,7 +216,10 @@ def compute_command(
     previous_command: tuple[float, float],
     prune_index: int,
     config: SimulationConfig,
-) -> tuple[tuple[float, float], int]:
+) -> tuple[tuple[float, float], int, float]:
+    """Return the raw command, the advanced prune index, and the pure-pursuit
+    curvature toward the lookahead point (shared by all four controllers,
+    before any regulation or window projection)."""
     transformed_path, prune_index = _transform_and_prune(path, pose, prune_index)
     if config.use_velocity_scaled_lookahead:
         lookahead = min(
@@ -231,10 +234,10 @@ def compute_command(
     linear_velocity = regulated_linear_velocity(curvature, transformed_path, config)
 
     if not config.use_dynamic_window:
-        return (linear_velocity, curvature * linear_velocity), prune_index
+        return (linear_velocity, curvature * linear_velocity), prune_index, curvature
 
     window = compute_dynamic_window(
         previous_command[0], previous_command[1], config.limits_dict(), config.dt
     )
     window = apply_regulation_to_window(window, linear_velocity)
-    return optimal_velocity_in_window(window, curvature), prune_index
+    return optimal_velocity_in_window(window, curvature), prune_index, curvature

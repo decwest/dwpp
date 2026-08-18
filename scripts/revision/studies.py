@@ -15,6 +15,8 @@ from .plotting import (
     plot_lines,
     plot_lookahead_tradeoff,
     plot_trajectories,
+    plot_velocity_profiles,
+    save_trajectory_legend,
 )
 from .simulator import (
     DEFAULT_CONFIG,
@@ -29,12 +31,14 @@ from .simulator import (
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_OUTPUT_ROOT = REPO_ROOT / "results" / "revision_sim"
 CONTROLLERS = ("PP", "APP", "RPP", "DWPP")
+# sigma_yaw = 0.65 * sigma_xy, the AMCL correction-jump ratio measured on the
+# exp1 real-robot logs (scripts/estimate_amcl_noise.py in the manuscript repo).
 NOISE_LEVELS = (
     (0.0, 0.0),
-    (0.01, 0.005),
-    (0.02, 0.01),
-    (0.05, 0.025),
-    (0.10, 0.05),
+    (0.01, 0.0065),
+    (0.02, 0.013),
+    (0.05, 0.0325),
+    (0.10, 0.065),
 )
 SEEDS = tuple(range(20))
 
@@ -99,6 +103,7 @@ _METRIC_DECIMALS = {
     "mean_error": 2,
     "max_error": 2,
     "travel_time": 1,
+    "max_abs_curvature": 1,
 }
 
 
@@ -113,7 +118,9 @@ def _param(value: object) -> str:
 
 
 def _latex_display(value: object) -> str:
-    return _latex_escape(value).replace(" +- ", r" $\pm$ ")
+    # Spaced "a +- b" renders as "a $\pm$ b"; tight "a+-b" (used by the
+    # compact per-controller tables) renders as "a$\pm$b".
+    return _latex_escape(value).replace(" +- ", r" $\pm$ ").replace("+-", r"$\pm$")
 
 
 def _write_manuscript_latex(
@@ -169,6 +176,30 @@ def _write_app_table(rows: Sequence[dict[str, object]], out: Path) -> None:
         ),
         body_rows=[tuple(row.values()) for row in table_rows],
     )
+    # Per-arm fragments for the side-by-side subtable layout of the manuscript.
+    for arm, stem in (("APP", "app"), ("APP+DW", "appdw")):
+        arm_rows = []
+        for value in sorted({float(row["lookahead_time"]) for row in rows}):
+            row = _filter(rows, arm=arm, lookahead_time=value)[0]
+            arm_rows.append(
+                {
+                    "l_t [s]": _dec(value, 1),
+                    "Violation [%]": _dec(row["violation_ratio"], 1),
+                    "Mean err. [m]": _dec(row["mean_error"], 2),
+                    "Max err. [m]": _dec(row["max_error"], 2),
+                    "Time [s]": _dec(row["travel_time"], 1),
+                }
+            )
+        write_csv(arm_rows, out / f"app_table_{stem}.csv")
+        _write_manuscript_latex(
+            out / f"app_table_{stem}.tex",
+            caption=f"PathC adaptive-lookahead results ({arm}).",
+            alignment="rrrrr",
+            header_lines=(
+                r"$l_t$ [s] & Viol. [\%] & Mean [m] & Max [m] & Time [s] \\",
+            ),
+            body_rows=[tuple(row.values()) for row in arm_rows],
+        )
 
 
 def _write_rpp_table(rows: Sequence[dict[str, object]], out: Path) -> None:
@@ -201,6 +232,30 @@ def _write_rpp_table(rows: Sequence[dict[str, object]], out: Path) -> None:
         ),
         body_rows=[tuple(row.values()) for row in table_rows],
     )
+    # Per-arm fragments for the side-by-side subtable layout of the manuscript.
+    for arm, stem in (("RPP", "rpp"), ("DWPP", "dwpp")):
+        arm_rows = []
+        for value in sorted({float(row["regulated_min_radius"]) for row in rows}):
+            row = _filter(rows, arm=arm, regulated_min_radius=value)[0]
+            arm_rows.append(
+                {
+                    "R_min [m]": _param(value),
+                    "Violation [%]": _dec(row["violation_ratio"], 1),
+                    "Mean err. [m]": _dec(row["mean_error"], 2),
+                    "Max err. [m]": _dec(row["max_error"], 2),
+                    "Time [s]": _dec(row["travel_time"], 1),
+                }
+            )
+        write_csv(arm_rows, out / f"rpp_table_{stem}.csv")
+        _write_manuscript_latex(
+            out / f"rpp_table_{stem}.tex",
+            caption=f"PathC curvature-regulation results ({arm}).",
+            alignment="rrrrr",
+            header_lines=(
+                r"$R_{\min}$ [m] & Viol. [\%] & Mean [m] & Max [m] & Time [s] \\",
+            ),
+            body_rows=[tuple(row.values()) for row in arm_rows],
+        )
 
 
 def _mean_std_cell(row: dict[str, object], metric: str, *, noisy: bool) -> str:
@@ -209,6 +264,33 @@ def _mean_std_cell(row: dict[str, object], metric: str, *, noisy: bool) -> str:
     if not noisy:
         return mean
     return f"{mean} +- {_dec(row[f'{metric}_std'], places)}"
+
+
+def _tight_mean_std_cell(row: dict[str, object], metric: str, *, noisy: bool) -> str:
+    """Compact ``mean+-sd`` cell (no surrounding spaces) for narrow subtables."""
+    places = _METRIC_DECIMALS[metric]
+    mean = _dec(row[f"{metric}_mean"], places)
+    if not noisy:
+        return mean
+    return f"{mean}+-{_dec(row[f'{metric}_std'], places)}"
+
+
+def _reach_cell(row: dict[str, object]) -> str:
+    """Yes/No goal-reaching cell, with a k/n fallback for partial reaching."""
+    count = int(row["reached_goal_count"])
+    total = int(row["n"])
+    if count == total:
+        return "Yes"
+    if count == 0:
+        return "No"
+    return f"{count}/{total}"
+
+
+def _time_cell(row: dict[str, object], *, noisy: bool) -> str:
+    """Travel time cell; timed-out settings (no seed reached) show a dash."""
+    if int(row["reached_goal_count"]) == 0:
+        return "--"
+    return _mean_std_cell(row, "travel_time", noisy=noisy)
 
 
 def _write_noise_table(rows: Sequence[dict[str, object]], out: Path) -> None:
@@ -222,20 +304,45 @@ def _write_noise_table(rows: Sequence[dict[str, object]], out: Path) -> None:
                 "Violation [%]": _mean_std_cell(row, "violation_ratio", noisy=noisy),
                 "Mean err. [m]": _mean_std_cell(row, "mean_error", noisy=noisy),
                 "Max err. [m]": _mean_std_cell(row, "max_error", noisy=noisy),
-                "Time [s]": _mean_std_cell(row, "travel_time", noisy=noisy),
-                "Reach [%]": _sig(row["reached_goal_rate"]),
+                "Time [s]": _time_cell(row, noisy=noisy),
+                "Reach": _reach_cell(row),
             }
         )
     write_csv(table_rows, out / "noise_table.csv")
     _write_manuscript_latex(
         out / "noise_table.tex",
-        caption=r"PathC localization-noise results. Nonzero-noise metrics are mean $\pm$ standard deviation over 20 seeds.",
+        caption=r"PathC localization-noise results. Nonzero-noise metrics are mean $\pm$ standard deviation over 20 seeds; -- marks settings that never reached the goal within the 120 s timeout.",
         alignment="rlrrrrr",
         header_lines=(
-            r"$\sigma_{xy}$ [m] & Controller & Violation [\%] & Mean err. [m] & Max err. [m] & Time [s] & Reach [\%] \\",
+            r"$\sigma_{xy}$ [m] & Controller & Violation [\%] & Mean err. [m] & Max err. [m] & Time [s] & Reach \\",
         ),
         body_rows=[tuple(row.values()) for row in table_rows],
     )
+    # Per-controller fragments for the 2x2 subtable layout of the manuscript.
+    for controller in CONTROLLERS:
+        sub_rows = []
+        for row in _filter(rows, controller=controller):
+            noisy = float(row["sigma_xy"]) > 0.0
+            sub_rows.append(
+                {
+                    "sigma_xy [m]": _sig(row["sigma_xy"]),
+                    "Violation [%]": _tight_mean_std_cell(row, "violation_ratio", noisy=noisy),
+                    "Mean err. [m]": _tight_mean_std_cell(row, "mean_error", noisy=noisy),
+                    "Max err. [m]": _tight_mean_std_cell(row, "max_error", noisy=noisy),
+                    "Time [s]": "--" if int(row["reached_goal_count"]) == 0 else _tight_mean_std_cell(row, "travel_time", noisy=noisy),
+                    "Reach": _reach_cell(row),
+                }
+            )
+        write_csv(sub_rows, out / f"noise_table_{controller.lower()}.csv")
+        _write_manuscript_latex(
+            out / f"noise_table_{controller.lower()}.tex",
+            caption=f"PathC localization-noise results ({controller}).",
+            alignment="rrrrrr",
+            header_lines=(
+                r"$\sigma_{xy}$ [m] & Viol. [\%] & Mean [m] & Max [m] & Time [s] & Reach \\",
+            ),
+            body_rows=[tuple(row.values()) for row in sub_rows],
+        )
 
 
 def _write_lookahead_table(rows: Sequence[dict[str, object]], out: Path) -> None:
@@ -251,30 +358,66 @@ def _write_lookahead_table(rows: Sequence[dict[str, object]], out: Path) -> None
                 "sigma=0 Time [s]": _dec(noiseless["travel_time_mean"], 1),
                 "sigma=0.05 Mean err. [m]": _dec(noisy["mean_error_mean"], 2),
                 "sigma=0.05 Max err. [m]": _dec(noisy["max_error_mean"], 2),
-                "sigma=0.05 Time [s]": _dec(noisy["travel_time_mean"], 1),
-                "sigma=0.05 Reach [%]": _sig(noisy["reached_goal_rate"]),
+                "sigma=0.05 Time [s]": "--" if int(noisy["reached_goal_count"]) == 0 else _dec(noisy["travel_time_mean"], 1),
+                "sigma=0.05 Reach": _reach_cell(noisy),
             }
         )
     write_csv(table_rows, out / "lookahead_table.csv")
     _write_manuscript_latex(
         out / "lookahead_table.tex",
-        caption=r"PathC fixed-lookahead DWPP results. The $\sigma_{xy}=0.05$ m entries are means over 20 seeds; the violation ratio was 0\% for every setting.",
+        caption=r"PathC fixed-lookahead DWPP results. The $\sigma_{xy}=0.05$ m entries are means over 20 seeds; the violation ratio was 0\% for every setting; -- marks settings that never reached the goal within the 120 s timeout.",
         alignment="rrrrrrrr",
         header_lines=(
             r" & \multicolumn{3}{c}{$\sigma_{xy}=0$ m} & \multicolumn{4}{c}{$\sigma_{xy}=0.05$ m} \\",
             r"\cmidrule(lr){2-4}\cmidrule(lr){5-8}",
-            r"$L$ [m] & Mean err. [m] & Max err. [m] & Time [s] & Mean err. [m] & Max err. [m] & Time [s] & Reach [\%] \\",
+            r"$L$ [m] & Mean err. [m] & Max err. [m] & Time [s] & Mean err. [m] & Max err. [m] & Time [s] & Reach \\",
         ),
         body_rows=[tuple(row.values()) for row in table_rows],
+    )
+    # Per-noise-level fragments for the side-by-side subtable layout.
+    noiseless_rows = [
+        {
+            "L [m]": row["L [m]"],
+            "Mean err. [m]": row["sigma=0 Mean err. [m]"],
+            "Max err. [m]": row["sigma=0 Max err. [m]"],
+            "Time [s]": row["sigma=0 Time [s]"],
+        }
+        for row in table_rows
+    ]
+    noisy_rows = [
+        {
+            "L [m]": row["L [m]"],
+            "Mean err. [m]": row["sigma=0.05 Mean err. [m]"],
+            "Max err. [m]": row["sigma=0.05 Max err. [m]"],
+            "Time [s]": row["sigma=0.05 Time [s]"],
+            "Reach": row["sigma=0.05 Reach"],
+        }
+        for row in table_rows
+    ]
+    write_csv(noiseless_rows, out / "lookahead_table_noiseless.csv")
+    _write_manuscript_latex(
+        out / "lookahead_table_noiseless.tex",
+        caption=r"PathC fixed-lookahead DWPP results ($\sigma_{xy}=0$ m).",
+        alignment="rrrr",
+        header_lines=(r"$L$ [m] & Mean [m] & Max [m] & Time [s] \\",),
+        body_rows=[tuple(row.values()) for row in noiseless_rows],
+    )
+    write_csv(noisy_rows, out / "lookahead_table_noisy.csv")
+    _write_manuscript_latex(
+        out / "lookahead_table_noisy.tex",
+        caption=r"PathC fixed-lookahead DWPP results ($\sigma_{xy}=0.05$ m).",
+        alignment="rrrrr",
+        header_lines=(r"$L$ [m] & Mean [m] & Max [m] & Time [s] & Reach \\",),
+        body_rows=[tuple(row.values()) for row in noisy_rows],
     )
 
 
 def _write_isotime_table(rows: Sequence[dict[str, object]], out: Path) -> None:
     table_rows = [
         {
-            "Path": row["path"],
             "Controller": row["controller"],
-            "v_max [m/s]": _sig(row["v_max"]),
+            "v_max [m/s]": _dec(row["v_max"], 3),
+            "R_min [m]": "--" if row["r_min"] is None else _param(row["r_min"]),
             "Time [s]": _dec(row["travel_time"], 1),
             "Mean err. [m]": _dec(row["mean_error"], 2),
             "Max err. [m]": _dec(row["max_error"], 2),
@@ -285,10 +428,10 @@ def _write_isotime_table(rows: Sequence[dict[str, object]], out: Path) -> None:
     write_csv(table_rows, out / "isotime_table.csv")
     _write_manuscript_latex(
         out / "isotime_table.tex",
-        caption=r"PathC equal-travel-time comparison.",
-        alignment="llrrrrr",
+        caption=r"PathC matched-travel-time comparison (single noiseless runs).",
+        alignment="lrrrrrr",
         header_lines=(
-            r"Path & Controller & $v_{max}$ [m/s] & Time [s] & Mean err. [m] & Max err. [m] & Violation [\%] \\",
+            r"Controller & $v_{\max}$ [m/s] & $R_{\min}$ [m] & Time [s] & Mean err. [m] & Max err. [m] & Violation [\%] \\",
         ),
         body_rows=[tuple(row.values()) for row in table_rows],
     )
@@ -463,6 +606,8 @@ def run_app(output_root: Path = DEFAULT_OUTPUT_ROOT) -> dict[str, object]:
         path,
         arm_panel("APP+DW"),
         out / "app_trajectories_appdw",
+        figsize=(3.4, 3.4),
+        legend=False,
     )
     plot_trajectories(
         path,
@@ -470,6 +615,12 @@ def run_app(output_root: Path = DEFAULT_OUTPUT_ROOT) -> dict[str, object]:
         out / "app_trajectories_app",
         xlim=dw_xlim,
         ylim=dw_ylim,
+        figsize=(3.4, 3.4),
+        legend=False,
+    )
+    save_trajectory_legend(
+        [rf"$l_t={value:g}$ s" for value in trajectory_values],
+        out / "app_trajectories_legend",
     )
     comparisons = []
     for path_name in paths:
@@ -566,6 +717,8 @@ def run_rpp(output_root: Path = DEFAULT_OUTPUT_ROOT) -> dict[str, object]:
         path,
         arm_panel("DWPP"),
         out / "rpp_trajectories_dwpp",
+        figsize=(3.4, 3.4),
+        legend=False,
     )
     plot_trajectories(
         path,
@@ -573,6 +726,12 @@ def run_rpp(output_root: Path = DEFAULT_OUTPUT_ROOT) -> dict[str, object]:
         out / "rpp_trajectories_rpp",
         xlim=dwpp_xlim,
         ylim=dwpp_ylim,
+        figsize=(3.4, 3.4),
+        legend=False,
+    )
+    save_trajectory_legend(
+        [rf"$R_{{min}}={value:g}$ m" for value in trajectory_values],
+        out / "rpp_trajectories_legend",
     )
     summary: dict[str, object] = {"rows": rows}
     for arm in ("RPP", "DWPP"):
@@ -599,7 +758,7 @@ def _aggregate_trials(
     row: dict[str, object] = {**identifying, "n": len(trials)}
     row["reached_goal_count"] = sum(trial.reached_goal for trial in trials)
     row["reached_goal_rate"] = 100.0 * float(row["reached_goal_count"]) / len(trials)
-    for metric in ("travel_time", "mean_error", "max_error", "violation_ratio"):
+    for metric in ("travel_time", "mean_error", "max_error", "violation_ratio", "max_abs_curvature"):
         values = np.asarray([getattr(trial, metric) for trial in trials], dtype=float)
         row[f"{metric}_mean"] = float(np.mean(values))
         row[f"{metric}_std"] = float(np.std(values, ddof=1)) if len(values) > 1 else 0.0
@@ -610,6 +769,7 @@ def run_noise(output_root: Path = DEFAULT_OUTPUT_ROOT) -> dict[str, object]:
     path = make_paths()["PathC"]
     rows: list[dict[str, object]] = []
     trajectory_results: dict[str, TrialResult] = {}
+    profile_results: dict[str, TrialResult] = {}
     for sigma_xy, sigma_yaw in NOISE_LEVELS:
         for controller in CONTROLLERS:
             trials = [
@@ -625,6 +785,8 @@ def run_noise(output_root: Path = DEFAULT_OUTPUT_ROOT) -> dict[str, object]:
             ]
             if sigma_xy == 0.02:
                 trajectory_results[controller] = trials[0]
+            if sigma_xy == 0.05:
+                profile_results[controller] = trials[0]
             rows.append(
                 _aggregate_trials(
                     trials,
@@ -681,6 +843,20 @@ def run_noise(output_root: Path = DEFAULT_OUTPUT_ROOT) -> dict[str, object]:
         ],
         out / "noise_trajectories",
     )
+    plot_velocity_profiles(
+        [
+            (
+                controller,
+                DEFAULT_CONFIG.dt,
+                profile_results[controller].commands,
+                profile_results[controller].applied_commands,
+            )
+            for controller in CONTROLLERS
+        ],
+        out / "noise_velocity_profile",
+        v_max=DEFAULT_CONFIG.max_linear_velocity,
+        w_max=DEFAULT_CONFIG.max_angular_velocity,
+    )
     dwpp_zero = all(float(row["violation_ratio_mean"]) == 0.0 for row in _filter(rows, controller="DWPP"))
     if not dwpp_zero:
         raise AssertionError("DWPP produced a constraint violation in the noise study")
@@ -689,8 +865,10 @@ def run_noise(output_root: Path = DEFAULT_OUTPUT_ROOT) -> dict[str, object]:
 
 def run_lookahead(output_root: Path = DEFAULT_OUTPUT_ROOT) -> dict[str, object]:
     path = make_paths()["PathC"]
-    values = np.round(np.arange(0.3, 1.21, 0.1), 10)
-    noise_levels = ((0.0, 0.0), (0.02, 0.01), (0.05, 0.025))
+    values = np.round(np.arange(0.2, 1.21, 0.1), 10)
+    # Noise OFF/ON only: the noiseless baseline and the severe level of the
+    # noise study (sigma_yaw = 0.65 * sigma_xy, as in NOISE_LEVELS).
+    noise_levels = ((0.0, 0.0), (0.05, 0.0325))
     rows: list[dict[str, object]] = []
     trajectory_results: dict[float, TrialResult] = {}
     for sigma_xy, sigma_yaw in noise_levels:
@@ -797,15 +975,15 @@ def _match_time(
     low = 0.05
     high = DEFAULT_CONFIG.max_linear_velocity
     best: TrialResult | None = None
+    # Full bisection without an early stop: the travel time is quantized by the
+    # control period, so running all iterations and keeping the closest visited
+    # result matches the target down to roughly one control step.
     for _ in range(28):
         value = (low + high) / 2.0
         config = replace(controller_config(controller), max_linear_velocity=value)
         result = _run(path, path_name, config)
         if best is None or abs(result.travel_time - target_time) < abs(best.travel_time - target_time):
             best = result
-        relative_error = abs(result.travel_time - target_time) / target_time
-        if relative_error <= 0.02:
-            break
         if result.travel_time > target_time:
             low = value
         else:
@@ -822,36 +1000,41 @@ def run_isotime(output_root: Path = DEFAULT_OUTPUT_ROOT) -> dict[str, object]:
     rows: list[dict[str, object]] = []
     path_name = "PathC"
     path = make_paths()[path_name]
-    dwpp = _run(path, path_name, controller_config("DWPP"))
+    # Matched conditions drawn from the R_min sweep of the rpp study: RPP is
+    # slowest at the largest swept threshold, and DWPP at R_min = 0.4 has the
+    # closest travel time (identical to R_min = 0.2, where the regulation is
+    # inactive because the window projection caps the corner speed below the
+    # regulation floor). PP and APP are then bisected to the DWPP travel time.
+    rpp = _run(path, path_name, replace(controller_config("RPP"), regulated_min_radius=2.0))
+    dwpp = _run(path, path_name, replace(controller_config("DWPP"), regulated_min_radius=0.4))
     trajectory_results: dict[str, TrialResult] = {}
     for controller in ("PP", "APP"):
         result = _match_time(path, path_name, controller, dwpp.travel_time)
-        label = f"{controller}@matched"
-        trajectory_results[label] = result
-        row = result.as_row()
+        trajectory_results[f"{controller}@matched"] = result
         rows.append(
             {
-                "path": path_name,
-                "controller": label,
+                "controller": controller,
                 "v_max": float(np.max(result.commands[:, 0])),
-                "travel_time": row["travel_time"],
-                "mean_error": row["mean_error"],
-                "max_error": row["max_error"],
-                "violation_ratio": row["violation_ratio"],
+                "r_min": None,
+                "travel_time": result.travel_time,
+                "mean_error": result.mean_error,
+                "max_error": result.max_error,
+                "violation_ratio": result.violation_ratio,
             }
         )
-    trajectory_results["DWPP"] = dwpp
-    rows.append(
-        {
-            "path": path_name,
-            "controller": "DWPP",
-            "v_max": DEFAULT_CONFIG.max_linear_velocity,
-            "travel_time": dwpp.travel_time,
-            "mean_error": dwpp.mean_error,
-            "max_error": dwpp.max_error,
-            "violation_ratio": dwpp.violation_ratio,
-        }
-    )
+    for label, result, r_min in (("RPP", rpp, 2.0), ("DWPP", dwpp, 0.4)):
+        trajectory_results[f"{label}@matched"] = result
+        rows.append(
+            {
+                "controller": label,
+                "v_max": DEFAULT_CONFIG.max_linear_velocity,
+                "r_min": r_min,
+                "travel_time": result.travel_time,
+                "mean_error": result.mean_error,
+                "max_error": result.max_error,
+                "violation_ratio": result.violation_ratio,
+            }
+        )
     out = output_root / "isotime"
     _write_isotime_table(rows, out)
     plot_trajectories(
@@ -861,7 +1044,7 @@ def run_isotime(output_root: Path = DEFAULT_OUTPUT_ROOT) -> dict[str, object]:
                 "PathC",
                 [
                     (label, trajectory_results[label].positions)
-                    for label in ("PP@matched", "APP@matched", "DWPP")
+                    for label in ("PP@matched", "APP@matched", "RPP@matched", "DWPP@matched")
                 ],
             )
         ],
