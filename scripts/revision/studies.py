@@ -226,7 +226,7 @@ def _write_rpp_table(rows: Sequence[dict[str, object]], out: Path) -> None:
         caption=r"PathC curvature-regulation results.",
         alignment="rrrrrrrrr",
         header_lines=(
-            r" & \multicolumn{4}{c}{RPP} & \multicolumn{4}{c}{DWPP} \\",
+            r" & \multicolumn{4}{c}{RPP} & \multicolumn{4}{c}{RPP+DW} \\",
             r"\cmidrule(lr){2-5}\cmidrule(lr){6-9}",
             r"$R_{min}$ [m] & Violation [\%] & Mean err. [m] & Max err. [m] & Time [s] & Violation [\%] & Mean err. [m] & Max err. [m] & Time [s] \\",
         ),
@@ -665,9 +665,11 @@ def run_rpp(output_root: Path = DEFAULT_OUTPUT_ROOT) -> dict[str, object]:
     violation_groups = []
     for arm in ("RPP", "DWPP"):
         selected = _filter(rows, path="PathC", arm=arm)
+        # Manuscript ablation naming: the DW arm is displayed as RPP+DW.
+        display = "RPP+DW" if arm == "DWPP" else arm
         tradeoff_groups.append(
             (
-                arm,
+                display,
                 [float(row["regulated_min_radius"]) for row in selected],
                 [float(row["mean_error"]) for row in selected],
                 [float(row["travel_time"]) for row in selected],

@@ -160,8 +160,14 @@ def plot_lookahead_tradeoff(
     xlabel: str = r"Lookahead distance $L$ [m]",
     colors: Sequence[str] = NOISE_COLORS,
 ) -> None:
-    """Plot tracking error and travel time against the swept parameter on twin axes."""
+    """Plot tracking error and travel time against the swept parameter on twin axes.
+
+    The title argument is kept for API compatibility but no longer rendered:
+    the manuscript captions carry the description.
+    """
     configure_style()
+    plt.rcParams.update({"font.size": 17, "axes.labelsize": 17, "legend.fontsize": 13,
+                         "xtick.labelsize": 15, "ytick.labelsize": 15})
     fig, error_ax = plt.subplots()
     time_ax = error_ax.twinx()
     sigma_handles: list[Line2D] = []
@@ -208,7 +214,7 @@ def plot_lookahead_tradeoff(
     error_ax.set_xlabel(xlabel)
     error_ax.set_ylabel("Mean tracking error [m]")
     time_ax.set_ylabel("Travel time [s]")
-    error_ax.set_title(title)
+    del title  # no in-figure title: the caption describes the panel
     error_ax.grid(True, alpha=0.3)
     error_ax.legend(handles=[*sigma_handles, *quantity_handles], loc="best")
     fig.tight_layout()
@@ -353,7 +359,7 @@ def plot_velocity_profiles(
         raw = np.asarray(raw, dtype=float)
         applied = np.asarray(applied, dtype=float)
         t = np.arange(len(raw)) * dt
-        with plt.rc_context({"font.size": 20}):
+        with plt.rc_context({"font.size": 24}):
             fig, (ax_v, ax_w) = plt.subplots(1, 2, figsize=(7, 3))
             ax_v.plot(t, raw[:, 0], "-", color="red", linewidth=1, alpha=0.8)
             ax_v.plot(t, applied[:, 0], "-", color="blue", linewidth=1)
@@ -374,15 +380,14 @@ def plot_velocity_profiles(
             fig.tight_layout()
             save_figure(fig, output_base.parent / f"{output_base.name}_{label.lower()}")
     handles = [
-        Line2D([0], [0], color="red", linewidth=1.5, alpha=0.8, label="Raw command"),
-        Line2D([0], [0], color="blue", linewidth=1.5, label="Executed command"),
-        Line2D([0], [0], color="black", linestyle="--", linewidth=1.5, label="Velocity limits"),
+        Line2D([0], [0], color="red", linewidth=1.5, alpha=0.8, label="Command velocity"),
+        Line2D([0], [0], color="blue", linewidth=1.5, label="Actual velocity"),
     ]
-    with plt.rc_context({"font.size": 12, "legend.fontsize": 11}):
+    with plt.rc_context({"font.size": 12, "legend.fontsize": 12}):
         fig = plt.figure(figsize=(6.4, 0.4))
         ax = fig.add_subplot(111)
         ax.axis("off")
-        ax.legend(handles=handles, loc="center", ncol=3, frameon=True,
+        ax.legend(handles=handles, loc="center", ncol=2, frameon=True,
                   handlelength=1.8, columnspacing=1.4, handletextpad=0.6)
         save_figure(fig, output_base.parent / f"{output_base.name}_legend")
 
