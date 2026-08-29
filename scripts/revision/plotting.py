@@ -81,6 +81,7 @@ def plot_trajectories(
     ylim: tuple[float, float] | None = None,
     figsize: tuple[float, float] | None = None,
     legend: bool = True,
+    legend_above: bool = False,
     linewidth: float = 1.0,
     font_size: int | None = None,
 ) -> tuple[tuple[float, float], tuple[float, float]]:
@@ -136,8 +137,20 @@ def plot_trajectories(
         if ylim is not None:
             ax.set_ylim(ylim)
         if legend:
-            ax.legend()
+            if legend_above:
+                ax.legend(
+                    loc="lower center",
+                    bbox_to_anchor=(0.5, 1.0),
+                    ncol=3,
+                    borderaxespad=0.2,
+                    columnspacing=1.0,
+                    handlelength=1.6,
+                )
+            else:
+                ax.legend()
     fig.tight_layout()
+    if legend_above:
+        fig.subplots_adjust(top=0.88)
     limits = (axes[0][0].get_xlim(), axes[0][0].get_ylim())
     save_figure(fig, output_base)
     return limits

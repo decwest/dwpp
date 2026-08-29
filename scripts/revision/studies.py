@@ -958,6 +958,7 @@ def run_lookahead(output_root: Path = DEFAULT_OUTPUT_ROOT) -> dict[str, object]:
             )
         ],
         out / "lookahead_trajectories",
+        legend_above=True,
         linewidth=1.8,
         font_size=20,
     )
