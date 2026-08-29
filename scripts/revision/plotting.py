@@ -216,8 +216,18 @@ def plot_lookahead_tradeoff(
     time_ax.set_ylabel("Travel time [s]")
     del title  # no in-figure title: the caption describes the panel
     error_ax.grid(True, alpha=0.3)
-    error_ax.legend(handles=[*sigma_handles, *quantity_handles], loc="best")
+    # Legend above the axes: inside placement collides with the travel-time
+    # curves for some sweeps (e.g. the R_min sweep).
+    error_ax.legend(
+        handles=[*sigma_handles, *quantity_handles],
+        loc="lower center",
+        bbox_to_anchor=(0.5, 1.0),
+        ncol=2,
+        borderaxespad=0.2,
+        columnspacing=1.2,
+    )
     fig.tight_layout()
+    fig.subplots_adjust(top=0.82)
     save_figure(fig, output_base)
 
 
