@@ -81,6 +81,8 @@ def plot_trajectories(
     ylim: tuple[float, float] | None = None,
     figsize: tuple[float, float] | None = None,
     legend: bool = True,
+    linewidth: float = 1.0,
+    font_size: int | None = None,
 ) -> tuple[tuple[float, float], tuple[float, float]]:
     """Plot true trajectories in the coordinate convention used by the paper.
 
@@ -91,6 +93,15 @@ def plot_trajectories(
         raise ValueError("At least one trajectory panel is required")
 
     configure_style()
+    if font_size is not None:
+        plt.rcParams.update({
+            "font.size": font_size,
+            "axes.labelsize": font_size,
+            "axes.titlesize": font_size,
+            "legend.fontsize": font_size - 3,
+            "xtick.labelsize": font_size - 2,
+            "ytick.labelsize": font_size - 2,
+        })
     panel_count = len(panels)
     if figsize is None:
         figsize = (6.5, 6.5) if panel_count == 1 else (5.2 * panel_count, 4.8)
@@ -103,14 +114,14 @@ def plot_trajectories(
                 -values[:, 0],
                 color=_series_color(label, index),
                 label=label,
-                linewidth=1.0,
+                linewidth=linewidth,
             )
         ax.plot(
             reference_path[:, 1],
             -reference_path[:, 0],
             "k--",
             label="Reference Path",
-            linewidth=1.0,
+            linewidth=max(1.0, 0.8 * linewidth),
             alpha=0.7,
         )
         ax.set_xlabel(r"$x$ [m]")
