@@ -356,16 +356,16 @@ def _write_lookahead_table(rows: Sequence[dict[str, object]], out: Path) -> None
                 "sigma=0 Mean err. [m]": _dec(noiseless["mean_error_mean"], 2),
                 "sigma=0 Max err. [m]": _dec(noiseless["max_error_mean"], 2),
                 "sigma=0 Time [s]": _dec(noiseless["travel_time_mean"], 1),
-                "sigma=0.05 Mean err. [m]": _dec(noisy["mean_error_mean"], 2),
-                "sigma=0.05 Max err. [m]": _dec(noisy["max_error_mean"], 2),
-                "sigma=0.05 Time [s]": "--" if int(noisy["reached_goal_count"]) == 0 else _dec(noisy["travel_time_mean"], 1),
+                "sigma=0.05 Mean err. [m]": _tight_mean_std_cell(noisy, "mean_error", noisy=True),
+                "sigma=0.05 Max err. [m]": _tight_mean_std_cell(noisy, "max_error", noisy=True),
+                "sigma=0.05 Time [s]": "--" if int(noisy["reached_goal_count"]) == 0 else _tight_mean_std_cell(noisy, "travel_time", noisy=True),
                 "sigma=0.05 Reach": _reach_cell(noisy),
             }
         )
     write_csv(table_rows, out / "lookahead_table.csv")
     _write_manuscript_latex(
         out / "lookahead_table.tex",
-        caption=r"PathC fixed-lookahead DWPP results. The $\sigma_{xy}=0.05$ m entries are means over 20 seeds; the violation ratio was 0\% for every setting; -- marks settings that never reached the goal within the 120 s timeout.",
+        caption=r"PathC fixed-lookahead DWPP results. The $\sigma_{xy}=0.05$ m entries are mean $\pm$ standard deviation over 20 seeds; the violation ratio was 0\% for every setting; -- marks settings that never reached the goal within the 120 s timeout.",
         alignment="rrrrrrrr",
         header_lines=(
             r" & \multicolumn{3}{c}{$\sigma_{xy}=0$ m} & \multicolumn{4}{c}{$\sigma_{xy}=0.05$ m} \\",
