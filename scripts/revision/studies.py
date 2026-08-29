@@ -949,7 +949,8 @@ def run_lookahead(output_root: Path = DEFAULT_OUTPUT_ROOT) -> dict[str, object]:
         path,
         [
             (
-                "DWPP",
+                # No in-figure title: the manuscript subcaption names the panel.
+                "",
                 [
                     (rf"$L={value:g}$ m", trajectory_results[value].positions)
                     for value in (0.3, 0.6, 0.9, 1.2)
@@ -958,7 +959,7 @@ def run_lookahead(output_root: Path = DEFAULT_OUTPUT_ROOT) -> dict[str, object]:
         ],
         out / "lookahead_trajectories",
         linewidth=1.8,
-        font_size=17,
+        font_size=20,
     )
     dwpp_zero = all(float(row["violation_ratio_mean"]) == 0.0 for row in rows)
     if not dwpp_zero:
