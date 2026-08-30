@@ -1,7 +1,7 @@
 [project]
-name = "dwp"
+name = "dwpp"
 version = "0.1.0"
-description = "Add your description here"
+description = "Dynamic Window Pure Pursuit: path-tracking simulations and studies"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
