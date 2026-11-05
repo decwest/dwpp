@@ -30,7 +30,7 @@ from .simulator import (
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_OUTPUT_ROOT = REPO_ROOT / "results" / "simulation"
+DEFAULT_OUTPUT_ROOT = Path(__file__).resolve().parent / "results"
 CONTROLLERS = ("PP", "APP", "RPP", "DWPP")
 # sigma_yaw = 0.65 * sigma_xy, the AMCL correction-jump ratio measured on the
 # exp1 real-robot logs (scripts/estimate_amcl_noise.py in the manuscript repo).

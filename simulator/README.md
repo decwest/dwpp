@@ -1,6 +1,6 @@
 # DWPP kinematic simulator
 
-A self-contained Python port (no ROS) of the Nav2 pure pursuit controllers and DWPP, used for the simulation studies of Section 5 of the article. Outputs are deterministic and go to `results/simulation/<study>/`.
+A self-contained Python port (no ROS) of the Nav2 pure pursuit controllers and DWPP, used for the simulation studies of Section 5 of the article. Outputs are deterministic and go to `simulator/results/<study>/`.
 
 From the repository root:
 

@@ -15,13 +15,13 @@ This repository accompanies the article
 
 ## Contents
 
-- [`simulator/`](simulator/): kinematic simulator and the simulation studies of the article (Section 5). Outputs are under `results/simulation/`.
+- [`simulator/`](simulator/): kinematic simulator and the simulation studies of the article (Section 5). Outputs are under `simulator/results/`.
 - [`real_robot/`](real_robot/): data of the real-robot experiments (Section 4) and the scripts that regenerate Figs. 7–11 and Tables 2–6.
 
 ## Reproducing the results
 
 ```bash
-# simulation studies (smoke|app|rpp|noise|lookahead|isotime|all) -> results/simulation/
+# simulation studies (smoke|app|rpp|noise|lookahead|isotime|accel|all) -> simulator/results/
 PYTHONPATH=. uv run python simulator/run_studies.py --study all
 
 # real-robot figures and tables -> real_robot/analysis_out/
