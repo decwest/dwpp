@@ -1,3 +1,9 @@
+> **Legacy branch.** This branch preserves the material of the earlier
+> conference papers (IAS-19 2025 simulator in `scripts/`, ROBOMECH 2025
+> videos in `results/robomech2025/`, and the related figures). The `main`
+> branch now contains only the material of the Robotics and Autonomous
+> Systems article; see `main` for the current simulator and the real-robot data.
+
 # DWPP: Dynamic Window Pure Pursuit for Robot Path Tracking Considering Velocity and Acceleration Constraints
 
 DWPP is a pure pursuit variant that computes velocity commands in the velocity space (the v–ω plane) and selects the command within the dynamic window closest to the path-tracking condition ω = κv, so that the commands always respect the velocity and acceleration constraints.
