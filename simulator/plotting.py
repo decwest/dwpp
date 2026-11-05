@@ -450,3 +450,40 @@ def plot_bands(
     ax.grid(True, alpha=0.3)
     ax.legend()
     save_figure(fig, output_base)
+
+
+def plot_accel_sensitivity(
+    gammas: Sequence[float],
+    errors_by_controller: dict[str, Sequence[float]],
+    output_base: Path,
+) -> None:
+    """Mean tracking error versus the acceleration-limit scale (manuscript Fig. 14)."""
+    configure_style()
+    with plt.rc_context(
+        {
+            "font.size": 17,
+            "axes.labelsize": 17,
+            "legend.fontsize": 14,
+            "xtick.labelsize": 15,
+            "ytick.labelsize": 15,
+        }
+    ):
+        fig, ax = plt.subplots(figsize=(5.0, 3.45))
+        for name, errors in errors_by_controller.items():
+            ax.plot(
+                list(gammas),
+                list(errors),
+                color=COLORS[name],
+                marker=MARKERS[name],
+                markersize=6,
+                linewidth=1.8,
+                label=name,
+            )
+        ax.set_yscale("log")
+        ax.set_xticks(list(gammas))
+        ax.set_xlabel(r"Acceleration-limit scale $\gamma$")
+        ax.set_ylabel("Mean tracking error [m]")
+        ax.grid(True, which="both", alpha=0.3)
+        ax.legend(ncol=2)
+        fig.tight_layout()
+        save_figure(fig, output_base)

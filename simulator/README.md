@@ -14,6 +14,7 @@ PYTHONPATH=. uv run python simulator/test_simulator.py             # minimal ass
 | `app` | Table 7, Fig. 12 |
 | `rpp` | Table 8, Fig. 13 |
 | `isotime` | Table 9 |
+| `accel` | Fig. 14 |
 | `noise` | Table 10, Fig. 15 |
 | `lookahead` | Table 11, Fig. 16 |
 | `smoke` | validation only: exits nonzero unless Path C gives `PP > APP > RPP > DWPP` in mean tracking error and DWPP has zero constraint violations on every path |

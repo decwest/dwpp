@@ -11,6 +11,7 @@ import numpy as np
 
 from .plotting import (
     COLORS,
+    plot_accel_sensitivity,
     plot_bands,
     plot_lines,
     plot_lookahead_tradeoff,
@@ -1059,6 +1060,48 @@ def run_isotime(output_root: Path = DEFAULT_OUTPUT_ROOT) -> dict[str, object]:
     return {"rows": rows}
 
 
+ACCEL_SCALES = (0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0)
+
+
+def run_accel(output_root: Path = DEFAULT_OUTPUT_ROOT) -> dict[str, object]:
+    """Scale the four acceleration limits by gamma on PathC (noiseless)."""
+    rows: list[dict[str, object]] = []
+    path_name = "PathC"
+    path = make_paths()[path_name]
+    for gamma in ACCEL_SCALES:
+        base = replace(
+            DEFAULT_CONFIG,
+            linear_acceleration=DEFAULT_CONFIG.linear_acceleration * gamma,
+            linear_deceleration=DEFAULT_CONFIG.linear_deceleration * gamma,
+            angular_acceleration=DEFAULT_CONFIG.angular_acceleration * gamma,
+            angular_deceleration=DEFAULT_CONFIG.angular_deceleration * gamma,
+        )
+        for controller in CONTROLLERS:
+            result = _run(path, path_name, controller_config(controller, base))
+            rows.append(
+                {
+                    "gamma": gamma,
+                    "controller": controller,
+                    "travel_time": result.travel_time,
+                    "mean_error": result.mean_error,
+                    "max_error": result.max_error,
+                    "violation_ratio": result.violation_ratio,
+                    "reached_goal": result.reached_goal,
+                }
+            )
+    out = output_root / "accel"
+    write_table(rows, out / "accel_table.csv")
+    plot_accel_sensitivity(
+        ACCEL_SCALES,
+        {
+            controller: [row["mean_error"] for row in rows if row["controller"] == controller]
+            for controller in CONTROLLERS
+        },
+        out / "accel_sensitivity",
+    )
+    return {"rows": rows}
+
+
 STUDY_FUNCTIONS = {
     "smoke": run_smoke,
     "app": run_app,
@@ -1066,6 +1109,7 @@ STUDY_FUNCTIONS = {
     "noise": run_noise,
     "lookahead": run_lookahead,
     "isotime": run_isotime,
+    "accel": run_accel,
 }
 
 
